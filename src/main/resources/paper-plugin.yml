@@ -1,0 +1,7 @@
+name: Karaoke
+version: '1.0-Alpha'
+main: me.Luki.karaoke.Karaoke
+api-version: '1.21'
+load: STARTUP
+authors: [ Luki & StreamCraft ]
+description: Walkie Talkie Plugin for StreamCraft 3, Simple Voice Chat extension
