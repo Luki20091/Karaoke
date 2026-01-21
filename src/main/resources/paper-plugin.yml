@@ -1,7 +1,30 @@
 name: Karaoke
-version: '1.0-Alpha'
+version: '${version}'
 main: me.Luki.karaoke.Karaoke
 api-version: '1.21'
 load: STARTUP
 authors: [ Luki & StreamCraft ]
-description: Walkie Talkie Plugin for StreamCraft 3, Simple Voice Chat extension
+description: Link-based karaoke with hologram lyrics and optional Simple Voice Chat music playback
+softdepend: [ voicechat, FancyHolograms ]
+
+commands:
+
+  karaoke:
+    description: Start karaoke from a link (YouTube/Spotify/etc)
+    usage: "/karaoke <link|stop> <czerwony|zielony|niebieski>"
+    permission: karaoke.use
+
+  karaokeadmin:
+    description: Admin commands for Karaoke
+    usage: "/karaokeadmin <reload|stopall|debug|http|status>"
+    permission: karaoke.admin
+
+permissions:
+
+  karaoke.use:
+    description: Allows using /karaoke
+    default: op
+
+  karaoke.admin:
+    description: Allows using /karaokeadmin
+    default: op

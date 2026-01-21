@@ -1,6 +1,7 @@
 plugins {
     id 'java'
     id("xyz.jpenilla.run-paper") version "2.3.1"
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 group = 'me.Luki'
@@ -12,10 +13,40 @@ repositories {
         name = "papermc-repo"
         url = "https://repo.papermc.io/repository/maven-public/"
     }
+    maven {
+        name = "maxhenkel"
+        url = "https://maven.maxhenkel.de/repository/public"
+    }
+    maven {
+        name = "fancyinnovations"
+        url = "https://repo.fancyinnovations.com/releases"
+    }
 }
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:1.21.8-R0.1-SNAPSHOT")
+
+    // FancyHolograms API (provided by the FancyHolograms plugin at runtime)
+    compileOnly("de.oliver:FancyHolograms:2.8.0")
+
+    // Simple Voice Chat API (provided by the voicechat plugin at runtime)
+    compileOnly("de.maxhenkel.voicechat:voicechat-api:2.6.0")
+
+    // JSON parsing
+    implementation("com.google.code.gson:gson:2.11.0")
+}
+
+shadowJar {
+    archiveClassifier.set("")
+    // Never bundle Paper or the Voice Chat API to avoid classloader mismatches
+    dependencies {
+        exclude(dependency("io.papermc.paper:.*"))
+        exclude(dependency("de.maxhenkel.voicechat:voicechat-api"))
+    }
+}
+
+tasks.build {
+    dependsOn(tasks.shadowJar)
 }
 
 tasks {
