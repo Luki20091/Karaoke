@@ -34,6 +34,9 @@ dependencies {
 
     // JSON parsing
     implementation("com.google.code.gson:gson:2.11.0")
+
+    // For extracting .tar.xz ffmpeg builds on Linux
+    implementation("org.tukaani:xz:1.10")
 }
 
 shadowJar {

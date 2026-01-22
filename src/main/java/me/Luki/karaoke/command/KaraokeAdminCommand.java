@@ -7,6 +7,11 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.jetbrains.annotations.NotNull;
 
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.Locale;
+
 public class KaraokeAdminCommand implements CommandExecutor {
 
     private final Karaoke plugin;
@@ -19,13 +24,17 @@ public class KaraokeAdminCommand implements CommandExecutor {
 
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, @NotNull String[] args) {
+        return execute(sender, label, args);
+    }
+
+    public boolean execute(@NotNull CommandSender sender, @NotNull String label, @NotNull String[] args) {
         if (!sender.hasPermission("karaoke.admin")) {
             plugin.messages().send(sender, "noPermission", "&cBrak uprawnień.");
             return true;
         }
 
         if (args.length == 0) {
-            plugin.messages().send(sender, "adminUsage", "&7Użycie: /karaokeadmin <reload|stopall|debug|http|status>");
+            plugin.messages().send(sender, "adminUsage", "&7Użycie: /" + label + " <reload|stopall|debug|http|status>");
             return true;
         }
 
@@ -37,6 +46,14 @@ public class KaraokeAdminCommand implements CommandExecutor {
                 boolean debugHttp = plugin.getConfig().getBoolean("debug.http", false);
                 plugin.debug().setEnabled(debugEnabled);
                 plugin.debug().setHttpEnabled(debugHttp);
+
+                try {
+                    if (plugin.voiceBridge() != null) {
+                        plugin.voiceBridge().reloadFromConfig();
+                    }
+                } catch (Throwable ignored) {
+                }
+
                 plugin.messages().send(sender, "adminReloaded", "&aPrzeładowano config.yml (debug={debug}, http={http}).",
                         "debug", String.valueOf(debugEnabled),
                         "http", String.valueOf(debugHttp));
@@ -89,20 +106,62 @@ public class KaraokeAdminCommand implements CommandExecutor {
                 int radius = (int) Math.max(0D, plugin.getConfig().getDouble("karaoke.exclusionRadiusBlocks", 100D));
                 int timeout = Math.max(1, plugin.getConfig().getInt("metadata.timeoutSeconds", 10));
                 long ttl = Math.max(0L, plugin.getConfig().getLong("metadata.cacheTtlSeconds", 3600L));
+
+                boolean svcEnabled = plugin.isSvcEnabled();
+                boolean svcHooked = plugin.isSvcHooked();
+                String svcHost = plugin.getSvcHost();
+                int svcPort = plugin.getSvcPort();
+                int svcDistance = (int) Math.max(0D, plugin.getSvcDistanceBlocks());
+
                 plugin.messages().send(sender, "adminStatus",
-                        "&7Status: &fdebug={debug} http={http} radius={radius} timeout={timeout}s cacheTtl={ttl}s",
+                    "&7Status: &fdebug={debug} http={http} radius={radius} timeout={timeout}s cacheTtl={ttl}s svc={svcEnabled} hooked={svcHooked} host={svcHost} port={svcPort} dist={svcDistance}",
                         "debug", String.valueOf(debugEnabled),
                         "http", String.valueOf(debugHttp),
                         "radius", String.valueOf(radius),
                         "timeout", String.valueOf(timeout),
-                        "ttl", String.valueOf(ttl));
+                    "ttl", String.valueOf(ttl),
+                    "svcEnabled", String.valueOf(svcEnabled),
+                    "svcHooked", String.valueOf(svcHooked),
+                    "svcHost", String.valueOf(svcHost),
+                    "svcPort", String.valueOf(svcPort),
+                    "svcDistance", String.valueOf(svcDistance));
                 return true;
             }
             default -> {
-                plugin.messages().send(sender, "adminUsage", "&7Użycie: /karaokeadmin <reload|stopall|debug|http|status>");
+                plugin.messages().send(sender, "adminUsage", "&7Użycie: /" + label + " <reload|stopall|debug|http|status>");
                 return true;
             }
         }
+    }
+
+    public Collection<String> suggest(@NotNull CommandSender sender, @NotNull String[] args) {
+        List<String> out = new ArrayList<>();
+
+        if (!sender.hasPermission("karaoke.admin")) {
+            return out;
+        }
+
+        if (args.length == 1) {
+            String prefix = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
+            for (String sub : List.of("reload", "stopall", "debug", "http", "status")) {
+                if (sub.startsWith(prefix)) {
+                    out.add(sub);
+                }
+            }
+            return out;
+        }
+
+        if (args.length == 2 && ("debug".equalsIgnoreCase(args[0]) || "http".equalsIgnoreCase(args[0]))) {
+            String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+            for (String v : List.of("on", "off")) {
+                if (v.startsWith(prefix)) {
+                    out.add(v);
+                }
+            }
+            return out;
+        }
+
+        return out;
     }
 
     private static boolean parseOnOff(String raw) {

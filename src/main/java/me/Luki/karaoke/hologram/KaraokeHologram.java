@@ -7,7 +7,9 @@ import de.oliver.fancyholograms.api.hologram.Hologram;
 import me.Luki.karaoke.Karaoke;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
+import org.bukkit.entity.Player;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -19,12 +21,14 @@ public class KaraokeHologram implements AutoCloseable {
     private final Karaoke plugin;
     private final HologramManager manager;
     private final List<Hologram> holograms;
+    private final List<String> hologramNames;
     private final String[] lastLines;
 
     public KaraokeHologram(Karaoke plugin, KaraokePlacement placement) {
         this.plugin = plugin;
         this.manager = FancyHologramsPlugin.get().getHologramManager();
         this.holograms = new ArrayList<>(3);
+        this.hologramNames = new ArrayList<>(3);
         this.lastLines = new String[] { null, null, null };
 
         Location base = placement.baseLocation().clone();
@@ -48,6 +52,7 @@ public class KaraokeHologram implements AutoCloseable {
             Hologram hologram = manager.create(data);
             manager.addHologram(hologram);
             holograms.add(hologram);
+            hologramNames.add(name);
         }
 
         if (plugin != null) {
@@ -86,17 +91,72 @@ public class KaraokeHologram implements AutoCloseable {
 
     @Override
     public void close() {
+        // FancyHolograms internals changed between versions; try a few removal paths.
         for (Hologram hologram : holograms) {
+            if (hologram == null) {
+                continue;
+            }
+
+            // Force-hide first to ensure client-side entities are removed.
+            try {
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    try {
+                        hologram.forceHideHologram(p);
+                    } catch (Throwable ignored) {
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
+
             try {
                 manager.removeHologram(hologram);
-            } catch (Exception ignored) {
+            } catch (Throwable t) {
+                if (plugin != null) {
+                    plugin.debug().debug(() -> "removeHologram(instance) failed: " + t.getClass().getSimpleName());
+                }
             }
 
             try {
                 hologram.deleteHologram();
-            } catch (Exception ignored) {
+            } catch (Throwable t) {
+                if (plugin != null) {
+                    plugin.debug().debug(() -> "deleteHologram() failed: " + t.getClass().getSimpleName());
+                }
             }
         }
+
+        for (String name : hologramNames) {
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            tryRemoveByName(name);
+        }
         holograms.clear();
+        hologramNames.clear();
+    }
+
+    private void tryRemoveByName(String name) {
+        try {
+            manager.getHologram(name).ifPresent(holo -> {
+                try {
+                    for (Player p : Bukkit.getOnlinePlayers()) {
+                        try {
+                            holo.forceHideHologram(p);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+                try {
+                    manager.removeHologram(holo);
+                } catch (Throwable ignored) {
+                }
+                try {
+                    holo.deleteHologram();
+                } catch (Throwable ignored) {
+                }
+            });
+        } catch (Throwable ignored) {
+        }
     }
 }
