@@ -77,7 +77,7 @@ audio:
 
 hologram:
   # How far above the player's feet the hologram center starts
-  baseYOffset: 3.0
+  baseYOffset: 2.0
   # 3 lines -> 3 blocks tall (distance between lines)
   lineSpacing: 1.0
   # Optional yaw offset to make the text face the player (try 180 if it's reversed)
