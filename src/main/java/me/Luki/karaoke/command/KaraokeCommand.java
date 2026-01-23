@@ -72,28 +72,95 @@ public class KaraokeCommand implements CommandExecutor {
         }
 
         if (args.length >= 1 && args[0].equalsIgnoreCase("pause")) {
-            if (args.length != 1) {
-                karaokeService.getPlugin().messages().send(player, "pauseUsage", "&7Użycie: /karaoke pause");
+            if (args.length == 1) {
+                karaokeService.pause(player);
                 return true;
             }
-            karaokeService.pause(player);
+
+            // /karaoke pause <player> -> only OP/admin can pause someone else's session
+            if (!player.isOp() && !player.hasPermission("karaoke.admin")) {
+                karaokeService.getPlugin().messages().send(player, "stopOthersNoPermission", "&cMożesz zatrzymać tylko swoje karaoke.");
+                return true;
+            }
+
+            String targetName = args[1].trim();
+            if (targetName.isEmpty()) {
+                karaokeService.getPlugin().messages().send(player, "pauseUsage", "&7Użycie: /karaoke pause <nick>");
+                return true;
+            }
+
+            Player target = Bukkit.getPlayerExact(targetName);
+            if (target == null) {
+                karaokeService.getPlugin().messages().send(player, "stopOtherNotOnline", "&cTen gracz nie jest online.");
+                return true;
+            }
+
+            karaokeService.pause(target);
+            karaokeService.getPlugin().messages().send(player, "pausedOtherSender", "&eZatrzymano (pauza) karaoke gracza {player}.",
+                    "player", target.getName());
+            karaokeService.getPlugin().messages().send(target, "pausedOtherTarget", "&eTwoje karaoke zostało zapauzowane przez admina.");
             return true;
         }
 
-        if (args.length >= 1 && (args[0].equalsIgnoreCase("resume") || args[0].equalsIgnoreCase("play"))) {
-            // NOTE: "play" is also used as a subcommand below; here it's resume only when used as single arg.
-            if (args[0].equalsIgnoreCase("resume") && args.length == 1) {
+        if (args.length >= 1 && args[0].equalsIgnoreCase("resume")) {
+            if (args.length == 1) {
                 karaokeService.resume(player);
                 return true;
             }
+
+            // /karaoke resume <player> -> only OP/admin can resume someone else's session
+            if (!player.isOp() && !player.hasPermission("karaoke.admin")) {
+                karaokeService.getPlugin().messages().send(player, "stopOthersNoPermission", "&cMożesz zatrzymać tylko swoje karaoke.");
+                return true;
+            }
+
+            String targetName = args[1].trim();
+            if (targetName.isEmpty()) {
+                karaokeService.getPlugin().messages().send(player, "resumeUsage", "&7Użycie: /karaoke resume <nick>");
+                return true;
+            }
+
+            Player target = Bukkit.getPlayerExact(targetName);
+            if (target == null) {
+                karaokeService.getPlugin().messages().send(player, "stopOtherNotOnline", "&cTen gracz nie jest online.");
+                return true;
+            }
+
+            karaokeService.resume(target);
+            karaokeService.getPlugin().messages().send(player, "resumedOtherSender", "&aWznowiono karaoke gracza {player}.",
+                    "player", target.getName());
+            karaokeService.getPlugin().messages().send(target, "resumedOtherTarget", "&aTwoje karaoke zostało wznowione przez admina.");
+            return true;
         }
 
         if (args.length >= 1 && args[0].equalsIgnoreCase("skip")) {
-            if (args.length != 1) {
-                karaokeService.getPlugin().messages().send(player, "skipUsage", "&7Użycie: /karaoke skip");
+            if (args.length == 1) {
+                karaokeService.skip(player);
                 return true;
             }
-            karaokeService.skip(player);
+
+            // /karaoke skip <player> -> only OP/admin can skip someone else's session
+            if (!player.isOp() && !player.hasPermission("karaoke.admin")) {
+                karaokeService.getPlugin().messages().send(player, "stopOthersNoPermission", "&cMożesz zatrzymać tylko swoje karaoke.");
+                return true;
+            }
+
+            String targetName = args[1].trim();
+            if (targetName.isEmpty()) {
+                karaokeService.getPlugin().messages().send(player, "skipUsage", "&7Użycie: /karaoke skip <nick>");
+                return true;
+            }
+
+            Player target = Bukkit.getPlayerExact(targetName);
+            if (target == null) {
+                karaokeService.getPlugin().messages().send(player, "stopOtherNotOnline", "&cTen gracz nie jest online.");
+                return true;
+            }
+
+            karaokeService.skip(target);
+            karaokeService.getPlugin().messages().send(player, "skippedOtherSender", "&aPominięto utwór gracza {player}.",
+                    "player", target.getName());
+            karaokeService.getPlugin().messages().send(target, "skippedOtherTarget", "&eTwój utwór został pominięty przez admina.");
             return true;
         }
 
@@ -173,6 +240,32 @@ public class KaraokeCommand implements CommandExecutor {
 
         if (args.length == 2 && "stop".equalsIgnoreCase(args[0])) {
             // /karaoke stop <nick>
+            if (sender.isOp() || sender.hasPermission("karaoke.admin")) {
+                String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    if (p.getName().toLowerCase(Locale.ROOT).startsWith(prefix)) {
+                        out.add(p.getName());
+                    }
+                }
+            }
+            return out;
+        }
+
+        if (args.length == 2 && ("pause".equalsIgnoreCase(args[0]) || "resume".equalsIgnoreCase(args[0]))) {
+            // /karaoke pause <nick> and /karaoke resume <nick>
+            if (sender.isOp() || sender.hasPermission("karaoke.admin")) {
+                String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+                for (Player p : Bukkit.getOnlinePlayers()) {
+                    if (p.getName().toLowerCase(Locale.ROOT).startsWith(prefix)) {
+                        out.add(p.getName());
+                    }
+                }
+            }
+            return out;
+        }
+
+        if (args.length == 2 && "skip".equalsIgnoreCase(args[0])) {
+            // /karaoke skip <nick>
             if (sender.isOp() || sender.hasPermission("karaoke.admin")) {
                 String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
                 for (Player p : Bukkit.getOnlinePlayers()) {

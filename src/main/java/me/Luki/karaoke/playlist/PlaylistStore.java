@@ -236,6 +236,19 @@ public final class PlaylistStore {
         return SetResult.OK;
     }
 
+    /** Returns the entry at a 1-based slot index (or null if missing/out of range). */
+    public synchronized PlaylistEntry getAtIndex(String playlistName, int idOneBased) {
+        StoredPlaylist p = playlistsByKey.get(key(playlistName));
+        if (p == null) {
+            return null;
+        }
+        int idx = idOneBased - 1;
+        if (idx < 0 || idx >= p.entries.size()) {
+            return null;
+        }
+        return p.entries.get(idx);
+    }
+
     public synchronized boolean remove(String playlistName, String entryNameOrIndex) {
         StoredPlaylist p = playlistsByKey.get(key(playlistName));
         if (p == null) {

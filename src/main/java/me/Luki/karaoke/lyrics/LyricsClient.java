@@ -30,15 +30,16 @@ public class LyricsClient {
 
         try {
             String query;
-            if (title != null && artist != null && !artist.isBlank()) {
-                query = title + " " + artist;
+            String artistNorm = normalizeArtist(artist);
+            if (title != null && artistNorm != null && !artistNorm.isBlank()) {
+                query = title + " " + artistNorm;
             } else if (title != null) {
                 query = title;
             } else {
                 query = null;
             }
 
-            String lrc = lrclib.searchSyncedLrc(query, progress);
+            String lrc = lrclib.searchLrc(query, progress);
             if (lrc == null || lrc.isBlank()) {
                 return new PlaceholderTimedLyrics(track);
             }
@@ -52,5 +53,20 @@ public class LyricsClient {
             plugin.debug().warn("Lyrics fetch failed; using placeholder", e);
             return new PlaceholderTimedLyrics(track);
         }
+    }
+
+    private static String normalizeArtist(String artist) {
+        if (artist == null) {
+            return null;
+        }
+        String a = artist.trim();
+        if (a.isBlank()) {
+            return a;
+        }
+        // YouTube oEmbed often returns "Artist - Topic" which harms lyrics search.
+        if (a.toLowerCase().endsWith("- topic")) {
+            a = a.substring(0, a.length() - "- topic".length()).trim();
+        }
+        return a;
     }
 }

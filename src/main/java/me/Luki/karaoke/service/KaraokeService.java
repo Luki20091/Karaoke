@@ -1,8 +1,6 @@
 package me.Luki.karaoke.service;
 
 import me.Luki.karaoke.Karaoke;
-import me.Luki.karaoke.lyrics.LyricsClient;
-import me.Luki.karaoke.lyrics.PlaceholderTimedLyrics;
 import me.Luki.karaoke.lyrics.TimedLyrics;
 import me.Luki.karaoke.meta.LinkMetadataClient;
 import me.Luki.karaoke.meta.TrackInfo;
@@ -30,7 +28,6 @@ public class KaraokeService {
     private final Map<UUID, PlayerQueue> queues;
 
     private final LinkMetadataClient metadataClient;
-    private final LyricsClient lyricsClient;
 
     public KaraokeService(Karaoke plugin, PlaylistStore playlistStore) {
         this.plugin = plugin;
@@ -39,7 +36,6 @@ public class KaraokeService {
         this.reservations = new ConcurrentHashMap<>();
         this.queues = new ConcurrentHashMap<>();
         this.metadataClient = new LinkMetadataClient(plugin);
-        this.lyricsClient = new LyricsClient(plugin);
     }
 
     public Karaoke getPlugin() {
@@ -168,9 +164,9 @@ public class KaraokeService {
                 : entry.cachedAuthor();
         TrackInfo track = new TrackInfo(title != null ? title : entry.name(), author, "cache");
 
-        // Lyrics: prefer cached LRC from disk; otherwise use placeholder and fetch asynchronously.
+        // Lyrics: prefer cached LRC from disk.
+        // If missing, do NOT fetch during /karaoke. Lyrics must be produced during /playlist add|import|prefetch.
         TimedLyrics lyrics = null;
-        boolean needsAsyncLyrics = false;
         try {
             String lrc = cache.readSyncedLyrics(sourceUrl);
             if (lrc != null && !lrc.isBlank()) {
@@ -181,41 +177,22 @@ public class KaraokeService {
             }
         } catch (Exception ignored) {
         }
-        if (lyrics == null) {
-            lyrics = new PlaceholderTimedLyrics(track);
-            needsAsyncLyrics = true;
+        if (lyrics != null) {
+            startCachedSession(player, origin, audioUrl, track, lyrics, color);
+            return;
         }
 
-        KaraokeSession session = startCachedSession(player, origin, audioUrl, track, lyrics, color);
-        if (needsAsyncLyrics && session != null) {
-            UUID playerId = player.getUniqueId();
-            plugin.messages().send(player, "loadingLyrics", "&7Pobieram tekst…");
-            ActionBarProgress bar = ActionBarProgress.start(plugin, player, "Tekst");
-            plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-                TimedLyrics fetched;
-                try {
-                    if (bar != null) {
-                        bar.setStage("Tekst");
-                    }
-                    fetched = lyricsClient.fetchLyrics(track, bar != null ? bar.asListener() : null);
-                } finally {
-                    if (bar != null) {
-                        bar.close();
-                    }
-                }
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    KaraokeSession current = sessions.get(playerId);
-                    if (current == session) {
-                        current.updateTrackAndLyrics(track, fetched, false);
-                        plugin.messages().send(player, "loadedLyrics", "&aTekst gotowy.");
-                    }
-                });
-            });
-        }
+        // Lyrics not cached -> do not start.
+        plugin.messages().send(player, "lyricsNotCached", "&eBrak tekstu w cache. Użyj /playlist <nazwa> prefetch lub dodaj/importuj utwór ponownie.");
     }
 
     private KaraokeSession startCachedSession(Player player, Location origin, String audioUrl, TrackInfo track, TimedLyrics lyrics, KaraokeTextColor color) {
         if (player == null) {
+            return null;
+        }
+
+        if (lyrics == null) {
+            plugin.messages().send(player, "lyricsNotCached", "&eBrak tekstu w cache. Użyj /playlist <nazwa> prefetch lub dodaj/importuj utwór ponownie.");
             return null;
         }
 
@@ -255,14 +232,13 @@ public class KaraokeService {
 
         plugin.messages().send(player, "startingFromCache", "&aStartuję z cache.");
 
-        TimedLyrics safeLyrics = lyrics != null ? lyrics : new PlaceholderTimedLyrics(track);
         final KaraokeSession[] holder = new KaraokeSession[1];
         KaraokeSession session = new KaraokeSession(
                 plugin,
                 player,
             originToUse,
                 track,
-                safeLyrics,
+                lyrics,
                 color,
                 audio,
                 () -> {
@@ -309,6 +285,24 @@ public class KaraokeService {
             return;
         }
 
+        // Never fetch lyrics during /karaoke. Direct links must be pre-cached via /playlist add|import|prefetch.
+        MediaCache cache = plugin.mediaCache();
+        if (cache != null) {
+            try {
+                String lrc = cache.readSyncedLyrics(link);
+                if (lrc == null || lrc.isBlank()) {
+                    plugin.messages().send(player, "lyricsNotCached", "&eBrak tekstu w cache. Użyj /playlist <nazwa> prefetch lub dodaj/importuj utwór ponownie.");
+                    return;
+                }
+            } catch (Exception ignored) {
+                plugin.messages().send(player, "lyricsNotCached", "&eBrak tekstu w cache. Użyj /playlist <nazwa> prefetch lub dodaj/importuj utwór ponownie.");
+                return;
+            }
+        } else {
+            plugin.messages().send(player, "cacheDisabled", "&cCache jest wyłączony lub niedostępny.");
+            return;
+        }
+
         int maxSessions = Math.max(0, plugin.getConfig().getInt("karaoke.maxConcurrentSessions", 0));
         if (maxSessions > 0 && sessions.size() >= maxSessions) {
             plugin.messages().send(player, "tooManySessions", "&cZa dużo aktywnych karaoke na serwerze. Spróbuj za chwilę.");
@@ -347,33 +341,9 @@ public class KaraokeService {
         reservations.put(playerId, new StartReservation(origin));
 
         plugin.messages().send(player, "loadingMetadata", "&7Ładuję informacje o utworze…");
-        plugin.debug().debug(() -> "Starting karaoke (instant) for " + player.getName() + " link=" + safeShort(link));
+        plugin.debug().debug(() -> "Starting karaoke (cached) for " + player.getName() + " link=" + safeShort(link));
 
-        // Start immediately with placeholder content so the user sees something right away.
-        TrackInfo placeholderTrack = new TrackInfo("(ładowanie…)", null, "loading");
-        TimedLyrics placeholderLyrics = new PlaceholderTimedLyrics(placeholderTrack);
-        final KaraokeSession[] holder = new KaraokeSession[1];
-        KaraokeSession session = new KaraokeSession(
-                plugin,
-                player,
-                origin,
-                placeholderTrack,
-                placeholderLyrics,
-                color,
-            null,
-                () -> {
-                    KaraokeSession current = sessions.get(playerId);
-                    if (current != null && current == holder[0]) {
-                        sessions.remove(playerId);
-                    }
-                }
-        );
-        holder[0] = session;
-        sessions.put(playerId, session);
-        reservations.remove(playerId);
-        session.start();
-
-        // Resolve metadata/lyrics in background and update the running session when ready.
+        // Resolve metadata in background and start session once track is known. Lyrics are already cached.
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             ActionBarProgress bar = ActionBarProgress.start(plugin, player, "YouTube");
             try {
@@ -382,38 +352,35 @@ public class KaraokeService {
                 }
                 TrackInfo resolvedTrack = metadataClient.resolve(link, bar != null ? bar.asListener() : null);
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    if (player.isOnline()) {
-                        plugin.messages().send(player, "loadedMetadata", "&aInformacje gotowe: &f{title}&7 - &f{author}",
-                                "title", resolvedTrack.title(),
-                                "author", (resolvedTrack.author() != null ? resolvedTrack.author() : resolvedTrack.source()));
-                        plugin.messages().send(player, "loadingLyrics", "&7Pobieram tekst…");
-                    }
-                });
-                if (bar != null) {
-                    bar.setStage("Tekst");
-                }
-                TimedLyrics resolvedLyrics = lyricsClient.fetchLyrics(resolvedTrack, bar != null ? bar.asListener() : null);
-
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
-                    if (player.isOnline()) {
-                        plugin.messages().send(player, "loadedLyrics", "&aTekst gotowy.");
-                    }
-                });
-
-                plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!player.isOnline()) {
                         plugin.debug().debug(() -> "Async update aborted (player offline): " + player.getName());
                         stop(player, false);
                         return;
                     }
 
-                    KaraokeSession current = sessions.get(playerId);
-                    if (current == null) {
+                    // Parse cached lyrics
+                    TimedLyrics parsedLyrics = null;
+                    try {
+                        String lrc = cache.readSyncedLyrics(link);
+                        if (lrc != null && !lrc.isBlank()) {
+                            var parsed = LrcParser.parse(lrc);
+                            if (!parsed.isEmpty()) {
+                                parsedLyrics = new LrcTimedLyrics(parsed);
+                            }
+                        }
+                    } catch (Exception ignored) {
+                    }
+                    if (parsedLyrics == null) {
+                        plugin.messages().send(player, "lyricsNotCached", "&eBrak tekstu w cache. Użyj /playlist <nazwa> prefetch lub dodaj/importuj utwór ponownie.");
                         return;
                     }
 
-                    // Update content and announce real title/author once.
-                    current.updateTrackAndLyrics(resolvedTrack, resolvedLyrics, true);
+                    plugin.messages().send(player, "loadedMetadata", "&aInformacje gotowe: &f{title}&7 - &f{author}",
+                            "title", resolvedTrack.title(),
+                            "author", (resolvedTrack.author() != null ? resolvedTrack.author() : resolvedTrack.source()));
+
+                    reservations.remove(playerId);
+                    startCachedSession(player, origin, link, resolvedTrack, parsedLyrics, color);
                 });
 
             } catch (Exception e) {
@@ -422,7 +389,6 @@ public class KaraokeService {
                     if (!player.isOnline()) {
                         return;
                     }
-                    // Keep session running with placeholder, but inform the user.
                     plugin.messages().send(
                             player,
                             "startFailed",

@@ -68,7 +68,7 @@ public class PlaylistCommand implements CommandExecutor {
         }
 
         if (args.length < 1) {
-            plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show|prefetch|import> ...");
+            plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show|prefetch|import|export> ...");
             return true;
         }
 
@@ -77,7 +77,7 @@ public class PlaylistCommand implements CommandExecutor {
         // 2) /playlist <playlistName> <sub> ... (requested)
         ParsedCommand parsedCmd = parseCommandShape(args);
         if (parsedCmd == null) {
-            plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show|prefetch|import> ...");
+            plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show|prefetch|import|export> ...");
             return true;
         }
 
@@ -167,15 +167,7 @@ public class PlaylistCommand implements CommandExecutor {
                     songName = "track-" + shortId(url);
                 }
 
-                boolean ok = store.add(playlist, new PlaylistEntry(songName, url, null, null, null));
-                if (!ok) {
-                    plugin.messages().send(sender, "playlistNotFound", "&cNie znaleziono playlisty.");
-                    return true;
-                }
-                store.save();
-                plugin.messages().send(sender, "playlistAdded", "&aDodano &f{song}&a do &f{pl}&a.", "song", songName, "pl", playlist);
-
-                // Fetch metadata + timed lyrics (LRC) in background.
+                // Validate + cache metadata/lyrics on add (async), then add only if lyrics exist.
                 plugin.messages().send(sender, "playlistPrefetchMetadataStart", "&7Pobieram informacje z YouTube…");
 
                 String initialName = songName;
@@ -198,17 +190,27 @@ public class PlaylistCommand implements CommandExecutor {
                         String lrc = null;
                         try {
                             String query = (cachedAuthor != null && !cachedAuthor.isBlank()) ? (cachedTitle + " " + cachedAuthor) : cachedTitle;
-                            lrc = lrclib.searchSyncedLrc(query);
+                            lrc = lrclib.searchLrc(query, null);
                         } catch (Exception ignored) {
                         }
-                        if (lrc != null && !lrc.isBlank()) {
-                            cache.storeSyncedLyrics(url, lrc);
+                        if (lrc == null || lrc.isBlank()) {
+                            plugin.getServer().getScheduler().runTask(plugin, () ->
+                                    plugin.messages().send(sender, "noLyricsAvailable", "&cBrak tekstu do tej piosenki w API."));
+                            return;
                         }
+
+                        cache.storeSyncedLyrics(url, lrc);
 
                         String finalNameToUse = nameToUse;
                         plugin.getServer().getScheduler().runTask(plugin, () -> {
+                            boolean ok = store.add(playlist, new PlaylistEntry(finalNameToUse, url, null, cachedTitle, cachedAuthor));
+                            if (!ok) {
+                                plugin.messages().send(sender, "playlistNotFound", "&cNie znaleziono playlisty.");
+                                return;
+                            }
                             store.upsertByUrl(playlist, url, finalNameToUse, cachedTitle, cachedAuthor);
                             store.save();
+                            plugin.messages().send(sender, "playlistAdded", "&aDodano &f{song}&a do &f{pl}&a.", "song", finalNameToUse, "pl", playlist);
                             plugin.messages().send(sender, "playlistPrefetchDone",
                                     "&aZbuforowano: &f{title}&7 - &f{author}",
                                     "title", cachedTitle != null ? cachedTitle : finalNameToUse,
@@ -266,6 +268,25 @@ public class PlaylistCommand implements CommandExecutor {
                 }
 
                 return importPlaylistFromCsv(sender, playlist, csvUrl);
+            }
+            case "export" -> {
+                String playlist;
+                if (parsedCmd.playlist != null && !parsedCmd.playlist.isBlank()) {
+                    playlist = parsedCmd.playlist.trim();
+                } else {
+                    if (parsedCmd.tail.length < 1) {
+                        plugin.messages().send(sender, "playlistExportUsage", "&7Użycie: /" + label + " export <playlist>");
+                        return true;
+                    }
+                    playlist = parsedCmd.tail[0].trim();
+                }
+
+                if (playlist.isBlank()) {
+                    plugin.messages().send(sender, "playlistExportUsage", "&7Użycie: /" + label + " export <playlist>");
+                    return true;
+                }
+
+                return exportPlaylistToCsv(sender, playlist);
             }
             case "addfile", "setfile" -> {
                 // Requested: /playlist <playlist> addfile <id> <url_to_mp3>
@@ -334,10 +355,83 @@ public class PlaylistCommand implements CommandExecutor {
                 return true;
             }
             default -> {
-                plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show|prefetch|import> ...");
+                plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show|prefetch|import|export> ...");
                 return true;
             }
         }
+    }
+
+    private boolean exportPlaylistToCsv(CommandSender sender, String playlistName) {
+        Playlist p = store.get(playlistName);
+        if (p == null) {
+            plugin.messages().send(sender, "playlistNotFound", "&cNie znaleziono playlisty.");
+            return true;
+        }
+
+        Path outDir = plugin.getDataFolder().toPath().resolve("exported");
+        try {
+            Files.createDirectories(outDir);
+        } catch (Exception e) {
+            plugin.messages().send(sender, "playlistExportFail", "&cNie udało się zapisać CSV: {error}", "error", "mkdir");
+            return true;
+        }
+
+        String base = safeFileBase(p.name());
+        long ts = Instant.now().toEpochMilli();
+        Path out = outDir.resolve(base + "-" + ts + ".csv");
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("id,yt_link,file_link\n");
+        List<PlaylistEntry> entries = p.entries();
+        for (int i = 0; i < entries.size(); i++) {
+            PlaylistEntry e = entries.get(i);
+            int id = i + 1;
+            String yt = e != null ? String.valueOf(e.url()) : "";
+            String file = (e != null && e.fileUrl() != null) ? e.fileUrl() : "";
+            sb.append(id)
+                    .append(',')
+                    .append(csvField(yt))
+                    .append(',')
+                    .append(csvField(file))
+                    .append('\n');
+        }
+
+        try {
+            Files.writeString(out, sb.toString(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            plugin.messages().send(sender, "playlistExportFail", "&cNie udało się zapisać CSV: {error}", "error", String.valueOf(e.getMessage()));
+            return true;
+        }
+
+        plugin.messages().send(sender, "playlistExportDone", "&aZapisano CSV: &f{file} &7(poziomów: {count})",
+                "file", out.toAbsolutePath().normalize().toString(),
+                "count", String.valueOf(entries.size()));
+        return true;
+    }
+
+    private static String csvField(String raw) {
+        String v = raw == null ? "" : raw;
+        boolean needsQuotes = v.contains(",") || v.contains("\n") || v.contains("\r") || v.contains("\"") || v.contains(";");
+        if (!needsQuotes) {
+            return v;
+        }
+        return "\"" + v.replace("\"", "\"\"") + "\"";
+    }
+
+    private static String safeFileBase(String name) {
+        String v = name == null ? "playlist" : name.trim();
+        if (v.isBlank()) {
+            v = "playlist";
+        }
+        // keep it filesystem-friendly
+        v = v.replaceAll("[^a-zA-Z0-9._-]+", "_");
+        if (v.length() > 40) {
+            v = v.substring(0, 40);
+        }
+        if (v.isBlank()) {
+            v = "playlist";
+        }
+        return v;
     }
 
     private boolean importPlaylistFromCsv(CommandSender sender, String playlistName, String csvUrlRaw) {
@@ -419,8 +513,12 @@ public class PlaylistCommand implements CommandExecutor {
 
                     String yt = r.ytLink == null ? "" : r.ytLink.trim();
                     String file = r.fileLink == null ? "" : r.fileLink.trim();
-                    String sourceUrl = !yt.isBlank() ? yt : file;
-                    if (sourceUrl.isBlank()) {
+                    PlaylistEntry existingEntry = store.getAtIndex(playlistName, r.id);
+
+                    String ytToUse = !yt.isBlank() ? yt : (existingEntry != null ? existingEntry.url() : "");
+                    String fileToUse = !file.isBlank() ? file : (existingEntry != null ? existingEntry.fileUrl() : null);
+                    String sourceUrl = !ytToUse.isBlank() ? ytToUse : (fileToUse == null ? "" : fileToUse);
+                    if (sourceUrl == null || sourceUrl.isBlank()) {
                         fail++;
                         if (bar != null) {
                             bar.setStage("Import " + processed + "/" + total + " (ok=" + ok + ")");
@@ -436,8 +534,25 @@ public class PlaylistCommand implements CommandExecutor {
                         }
 
                         // Insert/replace at requested 1-based id.
-                        String entryName = "track-" + r.id;
-                        PlaylistEntry entry = new PlaylistEntry(entryName, sourceUrl.trim(), file.isBlank() ? null : file.trim(), null, null);
+                        String entryName = existingEntry != null ? existingEntry.name() : ("track-" + r.id);
+
+                        boolean urlChanged = existingEntry != null
+                                && existingEntry.url() != null
+                                && !existingEntry.url().trim().equals(sourceUrl.trim());
+                        if (urlChanged) {
+                            entryName = "track-" + r.id;
+                        }
+
+                        String cachedTitleFromExisting = (existingEntry == null || urlChanged) ? null : existingEntry.cachedTitle();
+                        String cachedAuthorFromExisting = (existingEntry == null || urlChanged) ? null : existingEntry.cachedAuthor();
+
+                        PlaylistEntry entry = new PlaylistEntry(
+                                entryName,
+                                sourceUrl.trim(),
+                                (fileToUse == null || fileToUse.isBlank()) ? null : fileToUse.trim(),
+                                cachedTitleFromExisting,
+                                cachedAuthorFromExisting
+                        );
                         PlaylistStore.SetResult setRes = store.setAtIndex(playlistName, r.id, entry);
                         if (setRes != PlaylistStore.SetResult.OK) {
                             throw new IllegalArgumentException("Nieprawidłowe id w CSV (musi być 1..N bez przerw): " + r.id);
@@ -446,19 +561,20 @@ public class PlaylistCommand implements CommandExecutor {
                         // Metadata (only when we have an actual link like YouTube/Spotify)
                         String cachedTitle = null;
                         String cachedAuthor = null;
-                        if (!yt.isBlank()) {
+                        boolean missingLyrics = false;
+                        if (!ytToUse.isBlank()) {
                             if (bar != null) {
                                 bar.setStage("YouTube " + processed + "/" + total);
                             }
-                            var track = metadata.resolve(yt, null);
+                            var track = metadata.resolve(ytToUse, null);
                             cachedTitle = track.title();
                             cachedAuthor = track.author();
-                            cache.setCachedMeta(yt, cachedTitle, cachedAuthor);
+                            cache.setCachedMeta(ytToUse, cachedTitle, cachedAuthor);
 
                             // Lyrics
                             String lrcExisting = null;
                             try {
-                                lrcExisting = cache.readSyncedLyrics(yt);
+                                lrcExisting = cache.readSyncedLyrics(ytToUse);
                             } catch (Exception ignored) {
                             }
                             if (lrcExisting == null || lrcExisting.isBlank()) {
@@ -466,15 +582,25 @@ public class PlaylistCommand implements CommandExecutor {
                                     bar.setStage("Tekst " + processed + "/" + total);
                                 }
                                 String query = (cachedAuthor != null && !cachedAuthor.isBlank()) ? (cachedTitle + " " + cachedAuthor) : cachedTitle;
-                                String lrc = lrclib.searchSyncedLrc(query, null);
+                                String lrc = lrclib.searchLrc(query, null);
                                 if (lrc != null && !lrc.isBlank()) {
-                                    cache.storeSyncedLyrics(yt, lrc);
+                                    cache.storeSyncedLyrics(ytToUse, lrc);
+                                } else {
+                                    missingLyrics = true;
+                                    int id = r.id;
+                                    String titleToSend = cachedTitle != null && !cachedTitle.isBlank() ? cachedTitle : entryName;
+                                    String ytToSend = ytToUse;
+                                    plugin.getServer().getScheduler().runTask(plugin, () ->
+                                            plugin.messages().send(sender, "playlistImportNoLyrics", "&eBrak tekstu w API (id={id}): &f{title}",
+                                                    "id", String.valueOf(id),
+                                                    "title", titleToSend,
+                                                    "url", ytToSend));
                                 }
                             }
 
                             // Persist title/author back into playlists.json for this slot
                             String nameToUse = cachedTitle != null && !cachedTitle.isBlank() ? cachedTitle : entryName;
-                            store.upsertAtIndex(playlistName, r.id, yt, nameToUse, cachedTitle, cachedAuthor);
+                            store.upsertAtIndex(playlistName, r.id, ytToUse, nameToUse, cachedTitle, cachedAuthor);
                         }
 
                         // Audio
@@ -485,7 +611,11 @@ public class PlaylistCommand implements CommandExecutor {
                             cache.prefetchAudio(file).join();
                         }
 
-                        ok++;
+                        if (missingLyrics) {
+                            fail++;
+                        } else {
+                            ok++;
+                        }
                         if (bar != null) {
                             bar.setStage("Import " + processed + "/" + total + " (ok=" + ok + ")");
                             bar.update(processed, total);
@@ -876,13 +1006,13 @@ public class PlaylistCommand implements CommandExecutor {
 
         // When the user types "/playlist " and hits tab, Paper may pass args.length==0.
         if (args.length == 0) {
-            out.addAll(List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "import"));
+            out.addAll(List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "import", "export"));
             return out;
         }
 
         if (args.length == 1) {
             String prefix = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
-            for (String sub : List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "import")) {
+            for (String sub : List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "import", "export")) {
                 if (sub.startsWith(prefix)) {
                     out.add(sub);
                 }
@@ -898,7 +1028,7 @@ public class PlaylistCommand implements CommandExecutor {
 
         if (args.length == 2) {
             String sub = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
-            if (List.of("delete", "list", "add", "addfile", "setfile", "remove", "show", "play", "import", "prefetch").contains(sub)) {
+            if (List.of("delete", "list", "add", "addfile", "setfile", "remove", "show", "play", "import", "prefetch", "export").contains(sub)) {
                 String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
                 for (String name : store.listNames()) {
                     if (name.toLowerCase(Locale.ROOT).startsWith(prefix)) {
@@ -909,7 +1039,7 @@ public class PlaylistCommand implements CommandExecutor {
             // playlist-first: /playlist <playlist> <sub>
             if (!isSubcommand(sub)) {
                 String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
-                for (String cmd : List.of("show", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "import")) {
+                for (String cmd : List.of("show", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "import", "export")) {
                     if (cmd.startsWith(prefix)) {
                         out.add(cmd);
                     }
@@ -1220,7 +1350,7 @@ public class PlaylistCommand implements CommandExecutor {
             return false;
         }
         String v = s.trim().toLowerCase(Locale.ROOT);
-        return List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "prefetchlyrics", "warmup", "import").contains(v);
+        return List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "prefetchlyrics", "warmup", "import", "export").contains(v);
     }
 
     private static ParsedAdd parseAddArgs(String[] tail) {

@@ -122,6 +122,156 @@ public final class LrclibClient {
         return null;
     }
 
+    /**
+     * Returns LRC lyrics when available. Prefers synced lyrics, but will fall back to plain lyrics
+     * (converted into a synthetic timed LRC) so more tracks are considered "having lyrics".
+     */
+    public String searchLrc(String query, ProgressListener progress) throws Exception {
+        String q = query == null ? "" : query.trim();
+        if (q.isBlank()) {
+            return null;
+        }
+
+        String endpoint = "https://lrclib.net/api/search?q=" + URLEncoder.encode(q, StandardCharsets.UTF_8);
+
+        int timeoutSeconds = Math.max(1, plugin.getConfig().getInt("lyrics.timeoutSeconds", 15));
+        int retries = Math.max(0, plugin.getConfig().getInt("lyrics.retries", 1));
+        int backoffMs = Math.max(0, plugin.getConfig().getInt("lyrics.retryBackoffMs", 250));
+
+        URI uri;
+        try {
+            uri = URI.create(endpoint);
+        } catch (Exception e) {
+            return null;
+        }
+
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(uri)
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .header("User-Agent", getUserAgent())
+                .GET()
+                .build();
+
+        int attempts = 1 + retries;
+        HttpResponse<InputStream> res = null;
+        for (int attempt = 1; attempt <= attempts; attempt++) {
+            plugin.debug().http("GET " + uri + (attempts > 1 ? " (attempt " + attempt + "/" + attempts + ")" : ""));
+            try {
+                res = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+                int code = res.statusCode();
+                if (code == 200) {
+                    break;
+                }
+                if (attempt < attempts && isTransientHttp(code)) {
+                    sleepBackoff(backoffMs, attempt);
+                    continue;
+                }
+                return null;
+            } catch (java.io.IOException e) {
+                if (attempt < attempts) {
+                    sleepBackoff(backoffMs, attempt);
+                    continue;
+                }
+                throw e;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
+            }
+        }
+
+        if (res == null || res.statusCode() != 200) {
+            return null;
+        }
+
+        String body;
+        try {
+            body = readToString(res, progress);
+        } catch (Exception e) {
+            return null;
+        }
+
+        JsonArray arr;
+        try {
+            arr = JsonParser.parseString(body).getAsJsonArray();
+        } catch (Exception e) {
+            return null;
+        }
+
+        // Prefer synced lyrics
+        for (int i = 0; i < arr.size(); i++) {
+            JsonObject obj = arr.get(i).getAsJsonObject();
+            if (obj == null) {
+                continue;
+            }
+            if (obj.has("syncedLyrics") && !obj.get("syncedLyrics").isJsonNull()) {
+                String lrc = obj.get("syncedLyrics").getAsString();
+                if (lrc != null && !lrc.isBlank()) {
+                    return lrc;
+                }
+            }
+        }
+
+        // Fallback: plain lyrics -> synthetic LRC
+        for (int i = 0; i < arr.size(); i++) {
+            JsonObject obj = arr.get(i).getAsJsonObject();
+            if (obj == null) {
+                continue;
+            }
+
+            String plain = null;
+            if (obj.has("plainLyrics") && !obj.get("plainLyrics").isJsonNull()) {
+                plain = obj.get("plainLyrics").getAsString();
+            } else if (obj.has("lyrics") && !obj.get("lyrics").isJsonNull()) {
+                plain = obj.get("lyrics").getAsString();
+            }
+            String fake = plainToSyntheticLrc(plain);
+            if (fake != null && !fake.isBlank()) {
+                return fake;
+            }
+        }
+
+        return null;
+    }
+
+    private String plainToSyntheticLrc(String plain) {
+        if (plain == null) {
+            return null;
+        }
+        String text = plain.replace("\r\n", "\n").replace("\r", "\n");
+        String[] lines = text.split("\n");
+        int lineMs = Math.max(500, plugin.getConfig().getInt("lyrics.unsyncedLineMs", 3500));
+
+        StringBuilder sb = new StringBuilder();
+        int emitted = 0;
+        for (String raw : lines) {
+            if (raw == null) {
+                continue;
+            }
+            String line = raw.trim();
+            if (line.isBlank()) {
+                continue;
+            }
+            if (emitted >= 200) {
+                break;
+            }
+            long ms = (long) emitted * (long) lineMs;
+            sb.append(formatLrcTimestamp(ms)).append(line).append('\n');
+            emitted++;
+        }
+        return emitted == 0 ? null : sb.toString();
+    }
+
+    private static String formatLrcTimestamp(long ms) {
+        if (ms < 0) {
+            ms = 0;
+        }
+        long totalSeconds = ms / 1000L;
+        long minutes = totalSeconds / 60L;
+        long seconds = totalSeconds % 60L;
+        long centis = (ms % 1000L) / 10L;
+        return String.format("[%02d:%02d.%02d]", minutes, seconds, centis);
+    }
+
     private static String readToString(HttpResponse<InputStream> res, ProgressListener progress) throws Exception {
         long contentLen = res.headers().firstValueAsLong("Content-Length").orElse(-1L);
         if (progress != null) {

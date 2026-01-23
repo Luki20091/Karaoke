@@ -57,7 +57,7 @@ lyrics:
   enabled: true
   timeoutSeconds: 15
   # How many times to retry transient HTTP errors (IO/timeout/429/5xx)
-  retries: 4
+  retries: 2
   # Base backoff between retries (ms)
   retryBackoffMs: 250
   # Uses https://lrclib.net as a synced-lyrics provider when possible
@@ -179,8 +179,17 @@ messages:
   stopOthersNoPermission: '&cMożesz zatrzymać tylko swoje karaoke.'
   stopOtherUsage: '&7Użycie: /karaoke stop <nick>'
   stopOtherNotOnline: '&cTen gracz nie jest online.'
+  pauseUsage: '&7Użycie: /karaoke pause [nick]'
+  resumeUsage: '&7Użycie: /karaoke resume [nick]'
+  skipUsage: '&7Użycie: /karaoke skip [nick]'
   stoppedOtherSender: '&aZatrzymano karaoke gracza {player}.'
   stoppedOtherTarget: '&cTwoje karaoke zostało zatrzymane przez admina.'
+  skippedOtherSender: '&aPominięto utwór gracza {player}.'
+  skippedOtherTarget: '&eTwój utwór został pominięty przez admina.'
+  pausedOtherSender: '&eZatrzymano (pauza) karaoke gracza {player}.'
+  pausedOtherTarget: '&eTwoje karaoke zostało zapauzowane przez admina.'
+  resumedOtherSender: '&aWznowiono karaoke gracza {player}.'
+  resumedOtherTarget: '&aTwoje karaoke zostało wznowione przez admina.'
   provideLink: '&cPodaj link do utworu.'
   directLinksDisabled: '&eBezpośrednie linki są wyłączone. Najpierw dodaj utwór do
     playlisty i poczekaj aż się zbuforuje.'
@@ -189,6 +198,7 @@ messages:
   loadedMetadata: '&aInformacje gotowe: &f{title}&7 - &f{author}'
   loadingLyrics: '&7Pobieram tekst…'
   loadedLyrics: '&aTekst gotowy.'
+  noLyricsAvailable: '&cBrak tekstu do tej piosenki w API.'
   loadingAudio: '&7Pobieram plik audio…'
   loadedAudio: '&aPlik audio gotowy.'
   areaOccupied: '&cW pobliżu ({radius} bloków) działa już karaoke. Spróbuj dalej lub
@@ -219,6 +229,7 @@ messages:
   playlistPrefetchItemFail: '&cPrefetch nieudany ({i}/{n}): &f{name}&7 ({error})'
   
   cachingInProgress: '&7Buforuję ten utwór… spróbuj za chwilę.'
+  lyricsNotCached: '&eBrak tekstu w cache. Użyj /playlist <nazwa> prefetch lub dodaj/importuj utwór ponownie.'
   startingFromCache: '&aStartuję z cache.'
   cacheDisabled: '&cCache jest wyłączony.'
 
@@ -231,6 +242,11 @@ messages:
   playlistImportEmpty: '&cPusty plik CSV albo nie udało się go pobrać.'
   playlistImportBadCsv: '&cNie udało się zparsować CSV: {error}'
   playlistImportItemFail: '&cImport nieudany ({i}/{n}) id={id}: {error}'
+  playlistImportNoLyrics: '&eBrak tekstu w API (id={id}): &f{title}'
+
+  playlistExportUsage: '&7Użycie: /playlist export <playlist>'
+  playlistExportDone: '&aZapisano CSV: &f{file} &7(poziomów: {count})'
+  playlistExportFail: '&cNie udało się zapisać CSV: {error}'
   
   adminUsage: '&7Użycie: /karaokeadmin <reload|stopall|debug|http|status>'
   adminReloaded: '&aPrzeładowano config.yml (debug={debug}, http={http}).'
