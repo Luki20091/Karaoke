@@ -7,9 +7,11 @@ import me.Luki.karaoke.meta.LinkMetadataClient;
 import me.Luki.karaoke.playlist.Playlist;
 import me.Luki.karaoke.playlist.PlaylistEntry;
 import me.Luki.karaoke.playlist.PlaylistStore;
+import me.Luki.karaoke.util.ActionBarProgress;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.ArrayList;
@@ -20,6 +22,17 @@ import java.util.Locale;
 import java.util.UUID;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.Map;
 
 public class PlaylistCommand implements CommandExecutor {
 
@@ -28,6 +41,7 @@ public class PlaylistCommand implements CommandExecutor {
     private final MediaCache cache;
     private final LinkMetadataClient metadata;
     private final LrclibClient lrclib;
+    private final HttpClient http;
 
     public PlaylistCommand(Karaoke plugin, PlaylistStore store) {
         this.plugin = plugin;
@@ -35,6 +49,11 @@ public class PlaylistCommand implements CommandExecutor {
         this.cache = plugin.mediaCache();
         this.metadata = new LinkMetadataClient(plugin);
         this.lrclib = new LrclibClient(plugin);
+        int timeoutSeconds = Math.max(5, plugin.getConfig().getInt("metadata.timeoutSeconds", 10));
+        this.http = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(timeoutSeconds))
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
     }
 
     @Override
@@ -49,7 +68,7 @@ public class PlaylistCommand implements CommandExecutor {
         }
 
         if (args.length < 1) {
-            plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|remove|show> ...");
+            plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show|prefetch|import> ...");
             return true;
         }
 
@@ -58,7 +77,7 @@ public class PlaylistCommand implements CommandExecutor {
         // 2) /playlist <playlistName> <sub> ... (requested)
         ParsedCommand parsedCmd = parseCommandShape(args);
         if (parsedCmd == null) {
-            plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|remove|show> ...");
+            plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show|prefetch|import> ...");
             return true;
         }
 
@@ -157,7 +176,7 @@ public class PlaylistCommand implements CommandExecutor {
                 plugin.messages().send(sender, "playlistAdded", "&aDodano &f{song}&a do &f{pl}&a.", "song", songName, "pl", playlist);
 
                 // Fetch metadata + timed lyrics (LRC) in background.
-                plugin.messages().send(sender, "playlistPrefetchStart", "&7Pobieram nazwę/wykonawcę + tekst w tle…");
+                plugin.messages().send(sender, "playlistPrefetchMetadataStart", "&7Pobieram informacje z YouTube…");
 
                 String initialName = songName;
                 plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
@@ -166,6 +185,10 @@ public class PlaylistCommand implements CommandExecutor {
                         String cachedTitle = track.title();
                         String cachedAuthor = track.author();
                         cache.setCachedMeta(url, cachedTitle, cachedAuthor);
+
+                        plugin.getServer().getScheduler().runTask(plugin, () ->
+                                plugin.messages().send(sender, "playlistPrefetchLyricsStart", "&7Pobieram tekst z API…")
+                        );
 
                         String nameToUse = initialName;
                         if (parsed.name.isBlank() && cachedTitle != null && !cachedTitle.isBlank()) {
@@ -199,6 +222,50 @@ public class PlaylistCommand implements CommandExecutor {
                     }
                 });
                 return true;
+            }
+            case "prefetch", "prefetchlyrics", "warmup" -> {
+                String playlist;
+                if (parsedCmd.playlist != null && !parsedCmd.playlist.isBlank()) {
+                    playlist = parsedCmd.playlist.trim();
+                } else {
+                    if (parsedCmd.tail.length < 1) {
+                        plugin.messages().send(sender, "playlistPrefetchUsage", "&7Użycie: /" + label + " <playlist> prefetch");
+                        return true;
+                    }
+                    playlist = parsedCmd.tail[0].trim();
+                }
+                if (playlist.isBlank()) {
+                    plugin.messages().send(sender, "playlistPrefetchUsage", "&7Użycie: /" + label + " <playlist> prefetch");
+                    return true;
+                }
+                return prefetchPlaylist(sender, playlist);
+            }
+            case "import" -> {
+                String playlist;
+                String csvUrl;
+
+                if (parsedCmd.playlist != null && !parsedCmd.playlist.isBlank()) {
+                    playlist = parsedCmd.playlist.trim();
+                    if (parsedCmd.tail.length < 1) {
+                        plugin.messages().send(sender, "playlistImportUsage", "&7Użycie: /" + label + " <playlist> import <csv_url>");
+                        return true;
+                    }
+                    csvUrl = parsedCmd.tail[0].trim();
+                } else {
+                    if (parsedCmd.tail.length < 2) {
+                        plugin.messages().send(sender, "playlistImportUsage", "&7Użycie: /" + label + " import <playlist> <csv_url>");
+                        return true;
+                    }
+                    playlist = parsedCmd.tail[0].trim();
+                    csvUrl = parsedCmd.tail[1].trim();
+                }
+
+                if (playlist.isBlank() || csvUrl.isBlank()) {
+                    plugin.messages().send(sender, "playlistImportUsage", "&7Użycie: /" + label + " <playlist> import <csv_url>");
+                    return true;
+                }
+
+                return importPlaylistFromCsv(sender, playlist, csvUrl);
             }
             case "addfile", "setfile" -> {
                 // Requested: /playlist <playlist> addfile <id> <url_to_mp3>
@@ -267,10 +334,538 @@ public class PlaylistCommand implements CommandExecutor {
                 return true;
             }
             default -> {
-                plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show> ...");
+                plugin.messages().send(sender, "playlistUsage", "&7Użycie: /" + label + " <create|delete|list|add|addfile|setfile|remove|show|prefetch|import> ...");
                 return true;
             }
         }
+    }
+
+    private boolean importPlaylistFromCsv(CommandSender sender, String playlistName, String csvUrlRaw) {
+        if (cache == null) {
+            plugin.messages().send(sender, "cacheDisabled", "&cCache jest wyłączony.");
+            return true;
+        }
+
+        // Auto-fix common Dropbox links: dl=0 -> dl=1
+        String csvUrl = csvUrlRaw == null ? "" : csvUrlRaw.trim();
+        if (csvUrl.contains("dropbox.com") && csvUrl.contains("dl=0")) {
+            csvUrl = csvUrl.replace("dl=0", "dl=1");
+        }
+
+        if (!(csvUrl.startsWith("http://") || csvUrl.startsWith("https://"))) {
+            plugin.messages().send(sender, "playlistImportBadUrl", "&cTo nie wygląda na URL: &f{url}", "url", csvUrl);
+            return true;
+        }
+
+        // Ensure playlist exists
+        if (store.get(playlistName) == null) {
+            boolean created = store.create(playlistName);
+            if (created) {
+                store.save();
+            }
+        }
+
+        plugin.messages().send(sender, "playlistImportStart", "&7Importuję CSV do playlisty &f{name}&7…", "name", playlistName);
+
+        Player player = (sender instanceof Player p) ? p : null;
+        String finalCsvUrl = csvUrl;
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            ActionBarProgress bar = ActionBarProgress.start(plugin, player, "Import");
+            int ok = 0;
+            int fail = 0;
+            int processed = 0;
+            int total = 0;
+
+            try {
+                CsvDownload dl = downloadCsv(finalCsvUrl, playlistName);
+                if (dl == null || dl.csvText == null || dl.csvText.isBlank()) {
+                    String err = (dl != null && dl.error != null) ? String.valueOf(dl.error).trim() : "";
+                    plugin.getServer().getScheduler().runTask(plugin, () -> {
+                        if (!err.isBlank()) {
+                            plugin.messages().send(sender, "playlistImportDownloadFail", "&cNie udało się pobrać CSV: {error}", "error", err);
+                        } else {
+                            plugin.messages().send(sender, "playlistImportEmpty", "&cPusty plik CSV albo nie udało się go pobrać.");
+                        }
+                    });
+                    return;
+                }
+
+                if (dl.savedCopyPath != null) {
+                    String savedPath = dl.savedCopyPath.toAbsolutePath().normalize().toString();
+                    plugin.getServer().getScheduler().runTask(plugin, () ->
+                            plugin.messages().send(sender, "playlistImportSavedCopy", "&7Zapisano kopię CSV: &f{file}", "file", savedPath));
+                }
+
+                List<CsvRow> rows;
+                try {
+                    rows = parseImportCsv(dl.csvText);
+                } catch (Exception e) {
+                    String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                    plugin.getServer().getScheduler().runTask(plugin, () ->
+                            plugin.messages().send(sender, "playlistImportBadCsv", "&cNie udało się zparsować CSV: {error}", "error", msg));
+                    return;
+                }
+
+                total = rows.size();
+                if (bar != null) {
+                    bar.setStage("Import 0/" + total);
+                    bar.update(0L, total);
+                }
+
+                for (int i = 0; i < rows.size(); i++) {
+                    CsvRow r = rows.get(i);
+                    int idx1 = i + 1;
+                    processed = idx1;
+
+                    String yt = r.ytLink == null ? "" : r.ytLink.trim();
+                    String file = r.fileLink == null ? "" : r.fileLink.trim();
+                    String sourceUrl = !yt.isBlank() ? yt : file;
+                    if (sourceUrl.isBlank()) {
+                        fail++;
+                        if (bar != null) {
+                            bar.setStage("Import " + processed + "/" + total + " (ok=" + ok + ")");
+                            bar.update(processed, total);
+                        }
+                        continue;
+                    }
+
+                    try {
+                        if (bar != null) {
+                            bar.setStage("Import " + processed + "/" + total + " (ok=" + ok + ")");
+                            bar.update(processed - 1L, total);
+                        }
+
+                        // Insert/replace at requested 1-based id.
+                        String entryName = "track-" + r.id;
+                        PlaylistEntry entry = new PlaylistEntry(entryName, sourceUrl.trim(), file.isBlank() ? null : file.trim(), null, null);
+                        PlaylistStore.SetResult setRes = store.setAtIndex(playlistName, r.id, entry);
+                        if (setRes != PlaylistStore.SetResult.OK) {
+                            throw new IllegalArgumentException("Nieprawidłowe id w CSV (musi być 1..N bez przerw): " + r.id);
+                        }
+
+                        // Metadata (only when we have an actual link like YouTube/Spotify)
+                        String cachedTitle = null;
+                        String cachedAuthor = null;
+                        if (!yt.isBlank()) {
+                            if (bar != null) {
+                                bar.setStage("YouTube " + processed + "/" + total);
+                            }
+                            var track = metadata.resolve(yt, null);
+                            cachedTitle = track.title();
+                            cachedAuthor = track.author();
+                            cache.setCachedMeta(yt, cachedTitle, cachedAuthor);
+
+                            // Lyrics
+                            String lrcExisting = null;
+                            try {
+                                lrcExisting = cache.readSyncedLyrics(yt);
+                            } catch (Exception ignored) {
+                            }
+                            if (lrcExisting == null || lrcExisting.isBlank()) {
+                                if (bar != null) {
+                                    bar.setStage("Tekst " + processed + "/" + total);
+                                }
+                                String query = (cachedAuthor != null && !cachedAuthor.isBlank()) ? (cachedTitle + " " + cachedAuthor) : cachedTitle;
+                                String lrc = lrclib.searchSyncedLrc(query, null);
+                                if (lrc != null && !lrc.isBlank()) {
+                                    cache.storeSyncedLyrics(yt, lrc);
+                                }
+                            }
+
+                            // Persist title/author back into playlists.json for this slot
+                            String nameToUse = cachedTitle != null && !cachedTitle.isBlank() ? cachedTitle : entryName;
+                            store.upsertAtIndex(playlistName, r.id, yt, nameToUse, cachedTitle, cachedAuthor);
+                        }
+
+                        // Audio
+                        if (!file.isBlank()) {
+                            if (bar != null) {
+                                bar.setStage("Audio " + processed + "/" + total);
+                            }
+                            cache.prefetchAudio(file).join();
+                        }
+
+                        ok++;
+                        if (bar != null) {
+                            bar.setStage("Import " + processed + "/" + total + " (ok=" + ok + ")");
+                            bar.update(processed, total);
+                        }
+
+                        if ((idx1 % 5) == 0) {
+                            store.save();
+                        }
+                    } catch (Exception ex) {
+                        fail++;
+                        String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                        int id = r.id;
+                        int processedNow = processed;
+                        int totalNow = total;
+                        plugin.getServer().getScheduler().runTask(plugin, () ->
+                                plugin.messages().send(sender, "playlistImportItemFail", "&cImport nieudany ({i}/{n}) id={id}: {error}",
+                                        "i", String.valueOf(processedNow),
+                                        "n", String.valueOf(totalNow),
+                                        "id", String.valueOf(id),
+                                        "error", msg));
+                        if (bar != null) {
+                            bar.setStage("Import " + processed + "/" + total + " (ok=" + ok + ")");
+                            bar.update(processed, total);
+                        }
+                    }
+                }
+            } finally {
+                try {
+                    store.save();
+                } catch (Exception ignored) {
+                }
+                if (bar != null) {
+                    bar.close();
+                }
+
+                int okFinal = ok;
+                int failFinal = fail;
+                int totalFinal = total;
+                plugin.getServer().getScheduler().runTask(plugin, () ->
+                        plugin.messages().send(sender, "playlistImportDone", "&aImport zakończony: ok={ok}/{total} fail={fail}",
+                                "ok", String.valueOf(okFinal),
+                                "total", String.valueOf(totalFinal),
+                                "fail", String.valueOf(failFinal)));
+            }
+        });
+
+        return true;
+    }
+
+    private record CsvDownload(String csvText, Path savedCopyPath, String error) {}
+
+    private CsvDownload downloadCsv(String csvUrl, String playlistName) {
+        int timeoutSeconds = Math.max(5, plugin.getConfig().getInt("metadata.timeoutSeconds", 10));
+        long maxBytes = 5L * 1024L * 1024L; // 5MB safety
+
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create(csvUrl))
+                .timeout(Duration.ofSeconds(timeoutSeconds))
+                .header("User-Agent", getUserAgent())
+                .GET()
+                .build();
+
+        try {
+            HttpResponse<InputStream> res = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
+            if (res.statusCode() != 200) {
+                throw new IllegalStateException("HTTP " + res.statusCode());
+            }
+
+            byte[] bytes;
+            try (InputStream in = res.body(); ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                byte[] buf = new byte[8192];
+                long total = 0L;
+                int r;
+                while ((r = in.read(buf)) != -1) {
+                    total += r;
+                    if (total > maxBytes) {
+                        throw new IllegalStateException("CSV too large");
+                    }
+                    baos.write(buf, 0, r);
+                }
+                bytes = baos.toByteArray();
+            }
+
+            String text = new String(bytes, StandardCharsets.UTF_8);
+
+            Path saved = null;
+            try {
+                Path importedDir = plugin.getDataFolder().toPath().resolve("imported");
+                Files.createDirectories(importedDir);
+                String safeName = (playlistName == null ? "playlist" : playlistName.trim()).replaceAll("[^a-zA-Z0-9._-]+", "_");
+                String fileName = safeName + "-" + Instant.now().toEpochMilli() + ".csv";
+                saved = importedDir.resolve(fileName);
+                Files.write(saved, bytes);
+            } catch (Exception ignored) {
+            }
+
+            return new CsvDownload(text, saved, null);
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            return new CsvDownload(null, null, msg);
+        }
+    }
+
+    private static List<CsvRow> parseImportCsv(String csvText) {
+        String raw = csvText == null ? "" : csvText;
+        raw = raw.replace("\r\n", "\n").replace('\r', '\n');
+        String[] lines = raw.split("\n");
+
+        int headerIdx = -1;
+        for (int i = 0; i < lines.length; i++) {
+            String l = lines[i];
+            if (l == null) continue;
+            String t = l.trim();
+            if (!t.isEmpty()) {
+                headerIdx = i;
+                break;
+            }
+        }
+        if (headerIdx < 0) {
+            throw new IllegalArgumentException("CSV jest pusty");
+        }
+
+        String headerLine = stripBom(lines[headerIdx].trim());
+        char sep = detectSeparator(headerLine);
+        List<String> headers = splitCsvLine(headerLine, sep);
+        Map<String, Integer> headerMap = new HashMap<>();
+        for (int i = 0; i < headers.size(); i++) {
+            headerMap.put(normalizeHeader(headers.get(i)), i);
+        }
+
+        Integer idCol = headerMap.get("id");
+        Integer ytCol = headerMap.get("yt_link");
+        Integer fileCol = headerMap.get("file_link");
+        if (idCol == null || ytCol == null || fileCol == null) {
+            throw new IllegalArgumentException("Brak nagłówków: id, yt_link, file_link");
+        }
+
+        List<CsvRow> out = new ArrayList<>();
+        java.util.Set<Integer> seenIds = new java.util.HashSet<>();
+        java.util.List<Integer> duplicateIds = new java.util.ArrayList<>();
+        int minId = Integer.MAX_VALUE;
+        int maxId = Integer.MIN_VALUE;
+        for (int i = headerIdx + 1; i < lines.length; i++) {
+            String line = lines[i];
+            if (line == null) {
+                continue;
+            }
+            String t = line.trim();
+            if (t.isEmpty()) {
+                continue;
+            }
+
+            List<String> cols = splitCsvLine(line, sep);
+            String idRaw = getAt(cols, idCol);
+            String yt = getAt(cols, ytCol);
+            String file = getAt(cols, fileCol);
+
+            int id;
+            try {
+                id = Integer.parseInt(idRaw.trim());
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Nieprawidłowe id w wierszu " + (i + 1));
+            }
+
+            if (id < 1) {
+                throw new IllegalArgumentException("Błędne indexowanie: id musi być >= 1 (wiersz " + (i + 1) + ")");
+            }
+            if (!seenIds.add(id)) {
+                duplicateIds.add(id);
+            }
+            minId = Math.min(minId, id);
+            maxId = Math.max(maxId, id);
+
+            out.add(new CsvRow(id, yt, file));
+        }
+
+        if (out.isEmpty()) {
+            throw new IllegalArgumentException("CSV nie zawiera wierszy");
+        }
+
+        if (!duplicateIds.isEmpty()) {
+            duplicateIds.sort(Integer::compareTo);
+            String dup = duplicateIds.stream().distinct().limit(20).map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("?");
+            throw new IllegalArgumentException("Błędne indexowanie: zduplikowane id: " + dup);
+        }
+
+        if (minId != 1) {
+            throw new IllegalArgumentException("Błędne indexowanie: minimalne id=" + minId + " (musi być 1)");
+        }
+
+        // Must be exactly 1..N without gaps
+        if (seenIds.size() != maxId) {
+            java.util.List<Integer> missing = new java.util.ArrayList<>();
+            for (int id = 1; id <= maxId; id++) {
+                if (!seenIds.contains(id)) {
+                    missing.add(id);
+                    if (missing.size() >= 20) {
+                        break;
+                    }
+                }
+            }
+            String miss = missing.stream().map(String::valueOf).reduce((a, b) -> a + "," + b).orElse("?");
+            throw new IllegalArgumentException("Błędne indexowanie: brakuje id: " + miss + " (oczekiwane 1.." + maxId + ")");
+        }
+
+        // Sort by id so imports happen in order (required for append semantics)
+        out.sort((a, b) -> Integer.compare(a.id, b.id));
+        return out;
+    }
+
+    private record CsvRow(int id, String ytLink, String fileLink) {}
+
+    private static String stripBom(String s) {
+        if (s == null || s.isEmpty()) return "";
+        if (s.charAt(0) == '\uFEFF') return s.substring(1);
+        return s;
+    }
+
+    private static String normalizeHeader(String s) {
+        String t = s == null ? "" : s.trim().toLowerCase(Locale.ROOT);
+        t = t.replace("\"", "");
+        return t;
+    }
+
+    private static char detectSeparator(String headerLine) {
+        int commas = 0;
+        int semis = 0;
+        for (int i = 0; i < headerLine.length(); i++) {
+            char c = headerLine.charAt(i);
+            if (c == ',') commas++;
+            if (c == ';') semis++;
+        }
+        return semis > commas ? ';' : ',';
+    }
+
+    private static List<String> splitCsvLine(String line, char sep) {
+        List<String> out = new ArrayList<>();
+        if (line == null) {
+            return out;
+        }
+        StringBuilder cur = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    // Escaped quote ""
+                    cur.append('"');
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+                continue;
+            }
+
+            if (!inQuotes && c == sep) {
+                out.add(cur.toString().trim());
+                cur.setLength(0);
+                continue;
+            }
+            cur.append(c);
+        }
+        out.add(cur.toString().trim());
+        return out;
+    }
+
+    private static String getAt(List<String> cols, int idx) {
+        if (cols == null || idx < 0 || idx >= cols.size()) {
+            return "";
+        }
+        return cols.get(idx);
+    }
+
+    private String getUserAgent() {
+        String ua = String.valueOf(plugin.getConfig().getString("http.userAgent", "")).trim();
+        if (!ua.isBlank()) {
+            return ua;
+        }
+        String legacy = String.valueOf(plugin.getConfig().getString("cache.userAgent", "")).trim();
+        return legacy.isBlank() ? "KaraokePlugin/1.0" : legacy;
+    }
+
+    private boolean prefetchPlaylist(CommandSender sender, String playlistName) {
+        Playlist pl = store.get(playlistName);
+        if (pl == null) {
+            plugin.messages().send(sender, "playlistNotFound", "&cNie znaleziono playlisty.");
+            return true;
+        }
+        if (pl.entries().isEmpty()) {
+            plugin.messages().send(sender, "playlistEmpty", "&7Playlista &f{name}&7 jest pusta.", "name", pl.name());
+            return true;
+        }
+        if (cache == null) {
+            plugin.messages().send(sender, "cacheDisabled", "&cCache jest wyłączony.");
+            return true;
+        }
+
+        plugin.messages().send(sender, "playlistPrefetchAllStart", "&7Prefetch playlisty &f{name}&7: meta + tekst + audio…", "name", pl.name());
+
+        Player player = (sender instanceof Player p) ? p : null;
+        plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            ActionBarProgress bar = ActionBarProgress.start(plugin, player, "Prefetch");
+            int totalEntries = pl.entries().size();
+            int ok = 0;
+            int fail = 0;
+
+            try {
+                for (int i = 0; i < pl.entries().size(); i++) {
+                    PlaylistEntry e = pl.entries().get(i);
+                    if (e == null || e.url() == null || e.url().isBlank()) {
+                        continue;
+                    }
+
+                    String sourceUrl = e.url().trim();
+                    String display = (e.cachedTitle() != null && !e.cachedTitle().isBlank()) ? e.cachedTitle() : e.name();
+                    int idx1 = i + 1;
+
+                    try {
+                        if (bar != null) {
+                            bar.setStage("YouTube " + idx1 + "/" + totalEntries);
+                        }
+                        var track = metadata.resolve(sourceUrl, bar != null ? bar.asListener() : null);
+                        cache.setCachedMeta(sourceUrl, track.title(), track.author());
+
+                        String lrcExisting = null;
+                        try {
+                            lrcExisting = cache.readSyncedLyrics(sourceUrl);
+                        } catch (Exception ignored) {
+                        }
+
+                        if (lrcExisting == null || lrcExisting.isBlank()) {
+                            if (bar != null) {
+                                bar.setStage("Tekst " + idx1 + "/" + totalEntries);
+                            }
+                            String query = (track.author() != null && !track.author().isBlank()) ? (track.title() + " " + track.author()) : track.title();
+                            String lrc = lrclib.searchSyncedLrc(query, bar != null ? bar.asListener() : null);
+                            if (lrc != null && !lrc.isBlank()) {
+                                cache.storeSyncedLyrics(sourceUrl, lrc);
+                            }
+                        }
+
+                        // If fileUrl is present, warm the audio cache too.
+                        if (e.fileUrl() != null && !e.fileUrl().isBlank()) {
+                            if (bar != null) {
+                                bar.setStage("Audio " + idx1 + "/" + totalEntries);
+                            }
+                            cache.prefetchAudio(e.fileUrl().trim(), bar != null ? bar.asListener() : null).join();
+                        }
+
+                        // Persist title/author back into playlists.json
+                        store.upsertByUrl(playlistName, sourceUrl, display, track.title(), track.author());
+                        ok++;
+                    } catch (Exception ex) {
+                        fail++;
+                        String msg = ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName();
+                        plugin.getServer().getScheduler().runTask(plugin, () ->
+                                plugin.messages().send(sender, "playlistPrefetchItemFail", "&cPrefetch nieudany ({i}/{n}): &f{name}&7 ({error})",
+                                        "i", String.valueOf(idx1),
+                                        "n", String.valueOf(totalEntries),
+                                        "name", display,
+                                        "error", msg)
+                        );
+                    }
+                }
+            } finally {
+                if (bar != null) {
+                    bar.close();
+                }
+            }
+
+            final int okFinal = ok;
+            final int failFinal = fail;
+            plugin.getServer().getScheduler().runTask(plugin, () -> {
+                store.save();
+                plugin.messages().send(sender, "playlistPrefetchAllDone", "&aPrefetch gotowy: ok={ok} fail={fail}",
+                        "ok", String.valueOf(okFinal),
+                        "fail", String.valueOf(failFinal));
+            });
+        });
+        return true;
     }
 
     public Collection<String> suggest(@NotNull CommandSender sender, @NotNull String[] args) {
@@ -281,13 +876,13 @@ public class PlaylistCommand implements CommandExecutor {
 
         // When the user types "/playlist " and hits tab, Paper may pass args.length==0.
         if (args.length == 0) {
-            out.addAll(List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play"));
+            out.addAll(List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "import"));
             return out;
         }
 
         if (args.length == 1) {
             String prefix = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
-            for (String sub : List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play")) {
+            for (String sub : List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "import")) {
                 if (sub.startsWith(prefix)) {
                     out.add(sub);
                 }
@@ -303,7 +898,7 @@ public class PlaylistCommand implements CommandExecutor {
 
         if (args.length == 2) {
             String sub = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
-            if (List.of("delete", "list", "add", "addfile", "setfile", "remove", "show", "play").contains(sub)) {
+            if (List.of("delete", "list", "add", "addfile", "setfile", "remove", "show", "play", "import", "prefetch").contains(sub)) {
                 String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
                 for (String name : store.listNames()) {
                     if (name.toLowerCase(Locale.ROOT).startsWith(prefix)) {
@@ -314,7 +909,7 @@ public class PlaylistCommand implements CommandExecutor {
             // playlist-first: /playlist <playlist> <sub>
             if (!isSubcommand(sub)) {
                 String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
-                for (String cmd : List.of("show", "list", "add", "addfile", "setfile", "remove", "play")) {
+                for (String cmd : List.of("show", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "import")) {
                     if (cmd.startsWith(prefix)) {
                         out.add(cmd);
                     }
@@ -452,7 +1047,7 @@ public class PlaylistCommand implements CommandExecutor {
         plugin.messages().send(sender, "playlistAdded", "&aUstawiono &f{song}&a w &f{pl}&a (id={id}).",
             "song", displayName, "pl", playlist, "id", String.valueOf(id));
 
-        plugin.messages().send(sender, "playlistPrefetchStart", "&7Pobieram plik audio w tle…");
+        plugin.messages().send(sender, "playlistPrefetchAudioStart", "&7Pobieram plik audio…");
         int finalId = id;
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
@@ -552,12 +1147,16 @@ public class PlaylistCommand implements CommandExecutor {
         }
         store.save();
         plugin.messages().send(sender, "playlistAdded", "&aDodano &f{song}&a do &f{pl}&a.", "song", songName, "pl", playlist);
-        plugin.messages().send(sender, "playlistPrefetchStart", "&7Buforuję audio + tekst w tle…");
+        plugin.messages().send(sender, "playlistPrefetchAudioStart", "&7Pobieram plik audio…");
 
         String finalSongName = songName;
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
             try {
                 cache.prefetchAudio(url).join();
+
+                plugin.getServer().getScheduler().runTask(plugin, () ->
+                    plugin.messages().send(sender, "playlistPrefetchLyricsStart", "&7Pobieram tekst z API…")
+                );
 
                 // For local files we can't use oEmbed metadata; use provided name.
                 TitleAuthor ta = guessTitleAuthor(finalSongName);
@@ -621,7 +1220,7 @@ public class PlaylistCommand implements CommandExecutor {
             return false;
         }
         String v = s.trim().toLowerCase(Locale.ROOT);
-        return List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play").contains(v);
+        return List.of("show", "create", "delete", "list", "add", "addfile", "setfile", "remove", "play", "prefetch", "prefetchlyrics", "warmup", "import").contains(v);
     }
 
     private static ParsedAdd parseAddArgs(String[] tail) {

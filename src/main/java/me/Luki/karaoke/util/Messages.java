@@ -2,6 +2,7 @@ package me.Luki.karaoke.util;
 
 import me.Luki.karaoke.Karaoke;
 import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
 import org.jetbrains.annotations.NotNull;
 
 import net.kyori.adventure.text.Component;
@@ -26,6 +27,26 @@ public final class Messages {
 
     public void send(@NotNull CommandSender sender, @NotNull String key, @NotNull String fallback, Object... placeholders) {
         sender.sendMessage(format(getRaw(key, fallback), placeholders));
+    }
+
+    public void actionBar(@NotNull Player player, @NotNull String key, @NotNull String fallback, Object... placeholders) {
+        if (player == null || !player.isOnline()) {
+            return;
+        }
+        try {
+            player.sendActionBar(format(getRaw(key, fallback), placeholders));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    public void clearActionBar(@NotNull Player player) {
+        if (player == null || !player.isOnline()) {
+            return;
+        }
+        try {
+            player.sendActionBar(Component.empty());
+        } catch (Throwable ignored) {
+        }
     }
 
     public Component get(@NotNull String key, @NotNull String fallback) {

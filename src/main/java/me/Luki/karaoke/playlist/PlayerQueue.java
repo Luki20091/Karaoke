@@ -1,6 +1,7 @@
 package me.Luki.karaoke.playlist;
 
 import me.Luki.karaoke.service.KaraokeTextColor;
+import org.bukkit.Location;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -10,11 +11,13 @@ public final class PlayerQueue {
     private final List<PlaylistEntry> entries;
     private int index;
     private KaraokeTextColor color;
+    private final Location origin;
 
-    public PlayerQueue(List<PlaylistEntry> entries, KaraokeTextColor color) {
+    public PlayerQueue(List<PlaylistEntry> entries, KaraokeTextColor color, Location origin) {
         this.entries = new ArrayList<>(entries);
         this.index = 0;
         this.color = color;
+        this.origin = origin == null ? null : origin.clone();
     }
 
     public boolean isEmpty() {
@@ -38,6 +41,10 @@ public final class PlayerQueue {
 
     public KaraokeTextColor color() {
         return color;
+    }
+
+    public Location origin() {
+        return origin == null ? null : origin.clone();
     }
 
     public void setColor(KaraokeTextColor color) {

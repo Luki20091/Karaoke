@@ -4,6 +4,10 @@ metadata:
   # Used to resolve at least the title/author without any API keys
   # Supported: YouTube oEmbed, Spotify oEmbed
   timeoutSeconds: 10
+  # How many times to retry transient HTTP errors (IO/timeout/429/5xx)
+  retries: 1
+  # Base backoff between retries (ms)
+  retryBackoffMs: 250
   # Cache resolved titles/authors (seconds). Set 0 to disable.
   cacheTtlSeconds: 3600
   # Prevent unbounded memory growth when many unique links are used.
@@ -15,7 +19,7 @@ metadata:
 karaoke:
   # If false, /karaoke <link> <color> is blocked. Use playlists + cache instead.
   allowDirectLinks: false
-
+  
   # Hard stop if we can't resolve the true track duration
   maxDurationSeconds: 7200
   # Only one karaoke hologram session is allowed within this radius (in blocks)
@@ -25,61 +29,110 @@ karaoke:
   # This timeout (seconds) expires such reservations automatically.
   startReservationTimeoutSeconds: 30
 
+  # Safety limit: deny starting new sessions when too many are already active.
+  # 0 = unlimited.
+  maxConcurrentSessions: 0
+
+ui:
+  actionbar:
+    enabled: true
+    # How often to update the progress bar (ticks). 20 ticks = 1 second.
+    updatePeriodTicks: 4
+    # Auto-clear actionbar after no updates for this many seconds.
+    timeoutSeconds: 15
+    # Width of the progress bar (characters)
+    barWidth: 20
+
 debug:
   # Enables extra logging in console
   enabled: true
   # Log outgoing HTTP calls/statuses (only if debug.enabled=true)
   http: true
 
+http:
+  # Default User-Agent used for all outgoing HTTP requests (ffmpeg/metadata/lyrics/cache)
+  userAgent: KaraokePlugin/1.0
+
 lyrics:
   enabled: true
   timeoutSeconds: 15
+  # How many times to retry transient HTTP errors (IO/timeout/429/5xx)
+  retries: 4
+  # Base backoff between retries (ms)
+  retryBackoffMs: 250
   # Uses https://lrclib.net as a synced-lyrics provider when possible
   # If synced lyrics are not available, the plugin will fall back to plain lyrics
   # and approximate word timings.
-  provider: "lrclib"
+  provider: lrclib
 
 cache:
   enabled: true
-
+  
   # Persistent cache limit (bytes). Default: 10GB
   maxBytes: 10737418240
-
+  
   # Max size of a single downloaded file (bytes). Default: 1GB
   maxSingleBytes: 1073741824
-
+  
   downloadTimeoutSeconds: 30
-  userAgent: "KaraokePlugin/1.0"
+  # Legacy key (still supported). Prefer http.userAgent.
+  userAgent: KaraokePlugin/1.0
+  
+  # Optional limit for number of cached audio files.
+  # 0 = unlimited
+  maxFiles: 40
 
 library:
   # Local music library folder (relative to plugins/Karaoke/).
   # Put your mp3/ogg files here and import them with: /playlist addfile <playlist> <plik.mp3|plik.ogg> [nazwa...]
   enabled: true
-  rootDir: "music"
+  rootDir: music
   # If true, /playlist addfile may point to absolute paths. Keep false for safety.
   allowAbsolutePaths: false
 
 audio:
   # ffmpeg executable path/name used to decode mp3/ogg into PCM for SVC.
   # If ffmpeg isn't available, the plugin can still cache files and show lyrics, but audio playback via SVC won't work.
-  ffmpegPath: "ffmpeg"
-
+  ffmpegPath: C:\Users\lukas\Desktop\McWT\plugins\Karaoke\tools\ffmpeg\ffmpeg.exe
+  
   # If true, plugin will try to download ffmpeg on first start.
   # This downloads a 3rd-party ffmpeg build and stores it in plugins/Karaoke/tools/ffmpeg.
   autoDownloadFfmpeg: true
   # Provide either a direct ffmpeg binary URL (Linux/macOS typically) or a .zip containing ffmpeg/ffmpeg.exe.
   # Tip: You can host your own ffmpeg binary and point this URL at it.
+  # If ffmpegDownloadUrl is set, it overrides OS-specific keys below.
   # Ubuntu amd64 (recommended):
-  # ffmpegDownloadUrl: "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-  # Windows alternative:
-  ffmpegDownloadUrl: "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip"
+  ffmpegDownloadUrlLinux: https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+  # Windows (zip):
+  ffmpegDownloadUrlWindows: https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-win64-gpl.zip
+  # Optional override (leave empty to use OS-specific URL above)
+  ffmpegDownloadUrl: ''
+  # If false, Karaoke won't save auto-fixes (URL/path) to config.yml.
+  # Changes still apply for the current runtime.
+  persistAutoFixes: true
   ffmpegDownloadTimeoutSeconds: 120
 
 hologram:
   # How far above the player's feet the hologram center starts
   baseYOffset: 2.0
+  # Position inside the block on the axis you're facing.
+  # 0.5 = centered (old behavior). 0.2 moves closer to the wall in front of you.
+  # For the opposite direction, the plugin automatically uses (1.0 - blockInset).
+  blockInset: 0.05
+  # Extra vertical gap (in blocks) between the header and the lyrics lines.
+  # This is used as a "break" after the event line.
+  lineSpacingAfterHeader: 1.0
+  
+  # Header texts (supports legacy & color codes).
+  # Placeholders: {title}, {status}
+  headerNowPlaying: '&fTytuł: &6{title} &f- {status}'
+  headerEvent: '&fEvent Karaoke StremCraft III'
+  
+  # Status placeholders used in headerNowPlaying ({status})
+  statusPlaying: Gra
+  statusPaused: Zatrzymany
   # 3 lines -> 3 blocks tall (distance between lines)
-  lineSpacing: 1.0
+  lineSpacing: 0.5
   # Optional yaw offset to make the text face the player (try 180 if it's reversed)
   yawOffset: 180.0
 
@@ -87,25 +140,29 @@ svc:
   # Simple Voice Chat integration (optional)
   # These keys follow the same convention as the WalkieTalkiePlugin.
   enabled: true
-
+  
+  # Output volume multiplier for SVC audio.
+  # 1.0 = default, 0.5 = half volume, 0.0 = mute.
+  volume: 0.7
+  
   # For status/diagnostics only (SVC itself is configured separately).
   # If host is blank and address is provided, the plugin will display svc.address.
-  host: "172.19.32.1"
+  host: 172.19.32.1
   port: 24454
-  address: ""
-
+  address: ''
+  
   # How far (in blocks) players can hear the karaoke audio.
-  distanceBlocks: 50
-
+  distanceBlocks: 20
+  
   # Logs a one-time "hooked" message when the SVC API is available.
   logHook: true
-
+  
   # Temporary placeholder while a full "play music from link" pipeline is not implemented.
   # Plays a short tone when a karaoke session starts so you can verify SVC integration.
   testToneOnStart: true
   testToneDurationMs: 700
   testToneFrequencyHz: 440.0
-  testToneAmplitude: 0.10
+  testToneAmplitude: 0.1
 
 voicechat:
   # Legacy config keys kept for backwards-compatibility.
@@ -114,45 +171,92 @@ voicechat:
   distance: 50
 
 messages:
-  onlyPlayers: "&cTa komenda jest tylko dla graczy."
-  noPermission: "&cBrak uprawnień."
-  hologramsNotReady: "&cKaraoke jeszcze się ładuje (FancyHolograms nie jest gotowy). Spróbuj za chwilę."
-  stopped: "&aKaraoke zatrzymane."
-  stopOthersNoPermission: "&cMożesz zatrzymać tylko swoje karaoke."
-  stopOtherUsage: "&7Użycie: /karaoke stop <nick>"
-  stopOtherNotOnline: "&cTen gracz nie jest online."
-  stoppedOtherSender: "&aZatrzymano karaoke gracza {player}."
-  stoppedOtherTarget: "&cTwoje karaoke zostało zatrzymane przez admina."
-  provideLink: "&cPodaj link do utworu."
-  directLinksDisabled: "&eBezpośrednie linki są wyłączone. Najpierw dodaj utwór do playlisty i poczekaj aż się zbuforuje."
-  invalidColor: "&cNieprawidłowy kolor. Użyj: czerwony/zielony/niebieski"
-  loadingMetadata: "&7Ładuję informacje o utworze…"
-  areaOccupied: "&cW pobliżu ({radius} bloków) działa już karaoke. Spróbuj dalej lub użyj /karaoke stop."
-  areaOccupiedLate: "&cW pobliżu ({radius} bloków) działa już karaoke."
-  startFailed: "&cNie udało się uruchomić karaoke: {error}"
-  sessionStarted: "&aKaraoke: &f{title} &7- &f{author}"
-  sessionErrorStop: "&cKaraoke przerwane (błąd)."
+  onlyPlayers: '&cTa komenda jest tylko dla graczy.'
+  noPermission: '&cBrak uprawnień.'
+  hologramsNotReady: '&cKaraoke jeszcze się ładuje (FancyHolograms nie jest gotowy).
+    Spróbuj za chwilę.'
+  stopped: '&aKaraoke zatrzymane.'
+  stopOthersNoPermission: '&cMożesz zatrzymać tylko swoje karaoke.'
+  stopOtherUsage: '&7Użycie: /karaoke stop <nick>'
+  stopOtherNotOnline: '&cTen gracz nie jest online.'
+  stoppedOtherSender: '&aZatrzymano karaoke gracza {player}.'
+  stoppedOtherTarget: '&cTwoje karaoke zostało zatrzymane przez admina.'
+  provideLink: '&cPodaj link do utworu.'
+  directLinksDisabled: '&eBezpośrednie linki są wyłączone. Najpierw dodaj utwór do
+    playlisty i poczekaj aż się zbuforuje.'
+  invalidColor: '&cNieprawidłowy kolor. Użyj: czerwony/zielony/niebieski'
+  loadingMetadata: '&7Ładuję informacje o utworze…'
+  loadedMetadata: '&aInformacje gotowe: &f{title}&7 - &f{author}'
+  loadingLyrics: '&7Pobieram tekst…'
+  loadedLyrics: '&aTekst gotowy.'
+  loadingAudio: '&7Pobieram plik audio…'
+  loadedAudio: '&aPlik audio gotowy.'
+  areaOccupied: '&cW pobliżu ({radius} bloków) działa już karaoke. Spróbuj dalej lub
+    użyj /karaoke stop.'
+  areaOccupiedLate: '&cW pobliżu ({radius} bloków) działa już karaoke.'
+  startFailed: '&cNie udało się uruchomić karaoke: {error}'
+  sessionStarted: '&aKaraoke: &f{title} &7- &f{author}'
+  sessionErrorStop: '&cKaraoke przerwane (błąd).'
 
-  playlistPrefetchStart: "&7Buforuję audio + tekst w tle…"
-  playlistPrefetchDone: "&aZbuforowano: &f{title}&7 - &f{author}"
-  playlistPrefetchFail: "&cBuforowanie nieudane: {error}"
+  # Actionbar progress bar template
+  # Placeholders: {bar}, {percent}, {stage}, {read}, {total}
+  actionbarProgress: '&7[{bar}&7] &f{percent}% &7{stage}'
 
-  cachingInProgress: "&7Buforuję ten utwór… spróbuj za chwilę."
-  startingFromCache: "&aStartuję z cache."
-  cacheDisabled: "&cCache jest wyłączony."
+  tooManySessions: '&cZa dużo aktywnych karaoke na serwerze. Spróbuj za chwilę.'
+  
+  # Backwards-compatibility (older combined message)
+  playlistPrefetchStart: '&7Buforuję audio + tekst w tle…'
+  # Preferred: separated background stages
+  playlistPrefetchMetadataStart: '&7Pobieram informacje z YouTube…'
+  playlistPrefetchLyricsStart: '&7Pobieram tekst z API…'
+  playlistPrefetchAudioStart: '&7Pobieram plik audio…'
+  playlistPrefetchDone: '&aZbuforowano: &f{title}&7 - &f{author}'
+  playlistPrefetchFail: '&cBuforowanie nieudane: {error}'
 
-  adminUsage: "&7Użycie: /karaokeadmin <reload|stopall|debug|http|status>"
-  adminReloaded: "&aPrzeładowano config.yml (debug={debug}, http={http})."
-  adminStoppedAll: "&aZatrzymano wszystkie sesje karaoke."
-  adminDebugUsage: "&7Użycie: /karaokeadmin debug <on|off>"
-  adminHttpUsage: "&7Użycie: /karaokeadmin http <on|off>"
-  adminOnOffExpected: "&cUżyj: on/off"
-  adminDebugSet: "&aUstawiono debug.enabled={value}"
-  adminHttpSet: "&aUstawiono debug.http={value}"
-  adminStatus: "&7Status: &fdebug={debug} http={http} radius={radius} timeout={timeout}s cacheTtl={ttl}s svc={svcEnabled} hooked={svcHooked} host={svcHost} port={svcPort} dist={svcDistance}"
+  playlistPrefetchUsage: '&7Użycie: /playlist <playlist> prefetch'
+  playlistPrefetchAllStart: '&7Prefetch playlisty &f{name}&7: meta + tekst + audio…'
+  playlistPrefetchAllDone: '&aPrefetch gotowy: ok={ok} fail={fail}'
+  playlistPrefetchItemFail: '&cPrefetch nieudany ({i}/{n}): &f{name}&7 ({error})'
+  
+  cachingInProgress: '&7Buforuję ten utwór… spróbuj za chwilę.'
+  startingFromCache: '&aStartuję z cache.'
+  cacheDisabled: '&cCache jest wyłączony.'
+
+  playlistImportUsage: '&7Użycie: /playlist <playlist> import <csv_url>'
+  playlistImportStart: '&7Importuję CSV do playlisty &f{name}&7…'
+  playlistImportDone: '&aImport zakończony: ok={ok}/{total} fail={fail}'
+  playlistImportBadUrl: '&cTo nie wygląda na URL: &f{url}'
+  playlistImportDownloadFail: '&cNie udało się pobrać CSV: {error}'
+  playlistImportSavedCopy: '&7Zapisano kopię CSV: &f{file}'
+  playlistImportEmpty: '&cPusty plik CSV albo nie udało się go pobrać.'
+  playlistImportBadCsv: '&cNie udało się zparsować CSV: {error}'
+  playlistImportItemFail: '&cImport nieudany ({i}/{n}) id={id}: {error}'
+  
+  adminUsage: '&7Użycie: /karaokeadmin <reload|stopall|debug|http|status>'
+  adminReloaded: '&aPrzeładowano config.yml (debug={debug}, http={http}).'
+  adminStoppedAll: '&aZatrzymano wszystkie sesje karaoke.'
+  adminDebugUsage: '&7Użycie: /karaokeadmin debug <on|off>'
+  adminHttpUsage: '&7Użycie: /karaokeadmin http <on|off>'
+  adminOnOffExpected: '&cUżyj: on/off'
+  adminDebugSet: '&aUstawiono debug.enabled={value}'
+  adminHttpSet: '&aUstawiono debug.http={value}'
+  adminStatus: '&7Status: &fdebug={debug} http={http} radius={radius} timeout={timeout}s
+    cacheTtl={ttl}s ffmpeg={ffmpegSource} ffmpegPath={ffmpegPath} autoDl={ffmpegAutoDownload}
+    ffmpegUrl={ffmpegUrl} svc={svcEnabled} hooked={svcHooked} host={svcHost} port={svcPort}
+    dist={svcDistance}'
 
 
 
 # For tests
-# https://www.youtube.com/watch?v=cRwx3UZMjSI
-# https://www.dropbox.com/scl/fi/00k8d6c8tuidrljdxj0e7/WERSOW-TEN-JEDEN-MOMENT.mp3?rlkey=x40js3morkq6fsu7c6yi96kbh&st=1v0pncid&dl=1
+# /playlist create test
+# /playlist add test https://www.youtube.com/watch?v=cRwx3UZMjSI
+# /playlist addfile test 1 https://www.dropbox.com/scl/fi/00k8d6c8tuidrljdxj0e7/WERSOW-TEN-JEDEN-MOMENT.mp3?rlkey=x40js3morkq6fsu7c6yi96kbh&st=1v0pncid&dl=1
+#
+# CSV import example (must have headers: id, yt_link, file_link; ids must be 1..N without gaps):
+# id,yt_link,file_link
+# 1,https://www.youtube.com/watch?v=cRwx3UZMjSI,https://www.dropbox.com/somefile.mp3?dl=1
+# 2,https://www.youtube.com/watch?v=dQw4w9WgXcQ,https://www.dropbox.com/another.mp3?dl=1
+#
+# Import:
+# /playlist import test2 https://www.dropbox.com/s/XXXXXXXX/import.csv?dl=1
+# /karaoke play test2 czerwony

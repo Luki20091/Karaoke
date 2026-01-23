@@ -13,6 +13,7 @@ import me.Luki.karaoke.playlist.PlaylistStore;
 import me.Luki.karaoke.cache.MediaCache;
 import me.Luki.karaoke.lyrics.LrcParser;
 import me.Luki.karaoke.lyrics.LrcTimedLyrics;
+import me.Luki.karaoke.util.ActionBarProgress;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 
@@ -45,6 +46,10 @@ public class KaraokeService {
         return plugin;
     }
 
+    public PlaylistStore getPlaylistStore() {
+        return playlistStore;
+    }
+
     public void start(Player player, String link, KaraokeTextColor color) {
         startInternal(player, link, color, true);
     }
@@ -67,7 +72,7 @@ public class KaraokeService {
             }
 
             stop(player, true);
-            PlayerQueue q = new PlayerQueue(pl.entries(), color);
+            PlayerQueue q = new PlayerQueue(pl.entries(), color, player.getLocation());
             queues.put(player.getUniqueId(), q);
             PlaylistEntry first = q.current();
             if (first == null) {
@@ -77,7 +82,7 @@ public class KaraokeService {
             }
 
             plugin.messages().send(player, "playlistPlaying", "&aGram playlistę &f{name}&a.", "name", pl.name());
-            startFromCacheOrPrefetch(player, first, color);
+            startFromCacheOrPrefetch(player, q.origin(), first, color);
             return;
         }
 
@@ -105,10 +110,10 @@ public class KaraokeService {
             return;
         }
 
-        startFromCacheOrPrefetch(player, next, q.color());
+        startFromCacheOrPrefetch(player, q.origin(), next, q.color());
     }
 
-    private void startFromCacheOrPrefetch(Player player, PlaylistEntry entry, KaraokeTextColor color) {
+    private void startFromCacheOrPrefetch(Player player, Location origin, PlaylistEntry entry, KaraokeTextColor color) {
         if (player == null || entry == null) {
             return;
         }
@@ -130,11 +135,24 @@ public class KaraokeService {
         MediaCache.CachedItem item = cache.get(audioUrl);
 
         if (item == null || item.status != MediaCache.Status.READY || item.audioRelativePath == null) {
-            plugin.messages().send(player, "cachingInProgress", "&7Buforuję ten utwór… spróbuj za chwilę.");
+            plugin.messages().send(player, "loadingAudio", "&7Pobieram plik audio…");
+            ActionBarProgress bar = ActionBarProgress.start(plugin, player, "Audio");
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
                 try {
-                    cache.prefetchAudio(audioUrl).join();
+                    if (bar != null) {
+                        bar.setStage("Audio");
+                    }
+                    cache.prefetchAudio(audioUrl, bar != null ? bar.asListener() : null).join();
+                    plugin.getServer().getScheduler().runTask(plugin, () -> {
+                        if (player.isOnline()) {
+                            plugin.messages().send(player, "loadedAudio", "&aPlik audio gotowy.");
+                        }
+                    });
                 } catch (Exception ignored) {
+                } finally {
+                    if (bar != null) {
+                        bar.close();
+                    }
                 }
             });
             return;
@@ -164,26 +182,39 @@ public class KaraokeService {
         } catch (Exception ignored) {
         }
         if (lyrics == null) {
-            lyrics = new PlaceholderTimedLyrics(plugin, track);
+            lyrics = new PlaceholderTimedLyrics(track);
             needsAsyncLyrics = true;
         }
 
-        KaraokeSession session = startCachedSession(player, audioUrl, track, lyrics, color);
+        KaraokeSession session = startCachedSession(player, origin, audioUrl, track, lyrics, color);
         if (needsAsyncLyrics && session != null) {
             UUID playerId = player.getUniqueId();
+            plugin.messages().send(player, "loadingLyrics", "&7Pobieram tekst…");
+            ActionBarProgress bar = ActionBarProgress.start(plugin, player, "Tekst");
             plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
-                TimedLyrics fetched = lyricsClient.fetchLyrics(track);
+                TimedLyrics fetched;
+                try {
+                    if (bar != null) {
+                        bar.setStage("Tekst");
+                    }
+                    fetched = lyricsClient.fetchLyrics(track, bar != null ? bar.asListener() : null);
+                } finally {
+                    if (bar != null) {
+                        bar.close();
+                    }
+                }
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     KaraokeSession current = sessions.get(playerId);
                     if (current == session) {
                         current.updateTrackAndLyrics(track, fetched, false);
+                        plugin.messages().send(player, "loadedLyrics", "&aTekst gotowy.");
                     }
                 });
             });
         }
     }
 
-    private KaraokeSession startCachedSession(Player player, String audioUrl, TrackInfo track, TimedLyrics lyrics, KaraokeTextColor color) {
+    private KaraokeSession startCachedSession(Player player, Location origin, String audioUrl, TrackInfo track, TimedLyrics lyrics, KaraokeTextColor color) {
         if (player == null) {
             return null;
         }
@@ -206,13 +237,13 @@ public class KaraokeService {
         MediaCache.CachedItem item = cache.get(audioUrl);
         java.nio.file.Path audio = item != null ? cache.resolveAudioPath(item) : null;
 
-        Location origin = player.getLocation().clone();
+        Location originToUse = origin != null ? origin.clone() : player.getLocation().clone();
         UUID playerId = player.getUniqueId();
 
         stop(player, false);
 
         double exclusionRadius = Math.max(0D, plugin.getConfig().getDouble("karaoke.exclusionRadiusBlocks", 100D));
-        if (isAreaOccupied(origin, exclusionRadius, playerId)) {
+        if (isAreaOccupied(originToUse, exclusionRadius, playerId)) {
             plugin.messages().send(
                     player,
                     "areaOccupied",
@@ -224,12 +255,12 @@ public class KaraokeService {
 
         plugin.messages().send(player, "startingFromCache", "&aStartuję z cache.");
 
-        TimedLyrics safeLyrics = lyrics != null ? lyrics : new PlaceholderTimedLyrics(plugin, track);
+        TimedLyrics safeLyrics = lyrics != null ? lyrics : new PlaceholderTimedLyrics(track);
         final KaraokeSession[] holder = new KaraokeSession[1];
         KaraokeSession session = new KaraokeSession(
                 plugin,
                 player,
-                origin,
+            originToUse,
                 track,
                 safeLyrics,
                 color,
@@ -278,6 +309,12 @@ public class KaraokeService {
             return;
         }
 
+        int maxSessions = Math.max(0, plugin.getConfig().getInt("karaoke.maxConcurrentSessions", 0));
+        if (maxSessions > 0 && sessions.size() >= maxSessions) {
+            plugin.messages().send(player, "tooManySessions", "&cZa dużo aktywnych karaoke na serwerze. Spróbuj za chwilę.");
+            return;
+        }
+
         if (!plugin.isFancyHologramsReady()) {
             plugin.messages().send(
                     player,
@@ -314,7 +351,7 @@ public class KaraokeService {
 
         // Start immediately with placeholder content so the user sees something right away.
         TrackInfo placeholderTrack = new TrackInfo("(ładowanie…)", null, "loading");
-        TimedLyrics placeholderLyrics = new PlaceholderTimedLyrics(plugin, placeholderTrack);
+        TimedLyrics placeholderLyrics = new PlaceholderTimedLyrics(placeholderTrack);
         final KaraokeSession[] holder = new KaraokeSession[1];
         KaraokeSession session = new KaraokeSession(
                 plugin,
@@ -338,9 +375,30 @@ public class KaraokeService {
 
         // Resolve metadata/lyrics in background and update the running session when ready.
         plugin.getServer().getScheduler().runTaskAsynchronously(plugin, () -> {
+            ActionBarProgress bar = ActionBarProgress.start(plugin, player, "YouTube");
             try {
-                TrackInfo resolvedTrack = metadataClient.resolve(link);
-                TimedLyrics resolvedLyrics = lyricsClient.fetchLyrics(resolvedTrack);
+                if (bar != null) {
+                    bar.setStage("YouTube");
+                }
+                TrackInfo resolvedTrack = metadataClient.resolve(link, bar != null ? bar.asListener() : null);
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (player.isOnline()) {
+                        plugin.messages().send(player, "loadedMetadata", "&aInformacje gotowe: &f{title}&7 - &f{author}",
+                                "title", resolvedTrack.title(),
+                                "author", (resolvedTrack.author() != null ? resolvedTrack.author() : resolvedTrack.source()));
+                        plugin.messages().send(player, "loadingLyrics", "&7Pobieram tekst…");
+                    }
+                });
+                if (bar != null) {
+                    bar.setStage("Tekst");
+                }
+                TimedLyrics resolvedLyrics = lyricsClient.fetchLyrics(resolvedTrack, bar != null ? bar.asListener() : null);
+
+                plugin.getServer().getScheduler().runTask(plugin, () -> {
+                    if (player.isOnline()) {
+                        plugin.messages().send(player, "loadedLyrics", "&aTekst gotowy.");
+                    }
+                });
 
                 plugin.getServer().getScheduler().runTask(plugin, () -> {
                     if (!player.isOnline()) {
@@ -372,6 +430,10 @@ public class KaraokeService {
                             "error", safeUserError(e)
                     );
                 });
+            } finally {
+                if (bar != null) {
+                    bar.close();
+                }
             }
         });
     }

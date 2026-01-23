@@ -38,10 +38,51 @@ public final class FfmpegInstaller {
         }
     }
 
+    public static boolean isFfmpegOnPath() {
+        return isOnPath();
+    }
+
+    public static String selectDownloadUrlNoSideEffects(Karaoke plugin) {
+        if (plugin == null) {
+            return "";
+        }
+
+        String override = String.valueOf(plugin.getConfig().getString("audio.ffmpegDownloadUrl", "")).trim();
+        if (!override.isBlank()) {
+            return override;
+        }
+
+        String os = String.valueOf(System.getProperty("os.name", "")).toLowerCase(Locale.ROOT);
+        boolean windows = os.contains("win");
+        boolean linux = os.contains("linux");
+
+        String osSpecific = selectConfiguredUrl(plugin, windows, linux);
+        if (!osSpecific.isBlank()) {
+            return osSpecific;
+        }
+
+        return defaultUrlFor(os);
+    }
+
+    private static String getUserAgent(Karaoke plugin) {
+        if (plugin == null) {
+            return "KaraokePlugin/1.0";
+        }
+        String ua = String.valueOf(plugin.getConfig().getString("http.userAgent", "")).trim();
+        if (!ua.isBlank()) {
+            return ua;
+        }
+        // Backwards-compatibility
+        String legacy = String.valueOf(plugin.getConfig().getString("cache.userAgent", "")).trim();
+        return legacy.isBlank() ? "KaraokePlugin/1.0" : legacy;
+    }
+
     public static void ensureAvailable(Karaoke plugin) {
         if (plugin == null) {
             return;
         }
+
+        boolean persistAutoFixes = plugin.getConfig().getBoolean("audio.persistAutoFixes", true);
 
         boolean enabled = plugin.getConfig().getBoolean("audio.autoDownloadFfmpeg", false);
         if (!enabled) {
@@ -52,7 +93,6 @@ public final class FfmpegInstaller {
         String arch = String.valueOf(System.getProperty("os.arch", "")).toLowerCase(Locale.ROOT);
         boolean windows = os.contains("win");
         boolean linux = os.contains("linux");
-        boolean mac = os.contains("mac") || os.contains("darwin");
 
         dbg(plugin, "autoDownload enabled; os.name='" + System.getProperty("os.name", "") + "' os.arch='" + System.getProperty("os.arch", "") + "' java='" + System.getProperty("java.version", "") + "'");
 
@@ -78,22 +118,33 @@ public final class FfmpegInstaller {
         dbg(plugin, "installDir='" + installDir.toAbsolutePath() + "' expectedBinary='" + ffmpegExe.toAbsolutePath() + "'");
         if (Files.exists(ffmpegExe)) {
             plugin.getConfig().set("audio.ffmpegPath", ffmpegExe.toAbsolutePath().toString());
-            plugin.saveConfig();
+            if (persistAutoFixes) {
+                plugin.saveConfig();
+            }
             plugin.getLogger().info("Using bundled ffmpeg: " + ffmpegExe.toAbsolutePath());
             dbg(plugin, "bundled ffmpeg already exists; updated config audio.ffmpegPath");
             return;
         }
 
         String url = String.valueOf(plugin.getConfig().getString("audio.ffmpegDownloadUrl", "")).trim();
+        boolean fromOverrideUrl = !url.isBlank();
+        boolean persistedDefaultUrl = false;
         if (url.isBlank()) {
-            url = defaultUrlFor(os);
+            url = selectConfiguredUrl(plugin, windows, linux);
             if (url.isBlank()) {
-                plugin.getLogger().warning("audio.autoDownloadFfmpeg=true but no default ffmpeg URL is available for this OS. Set audio.ffmpegDownloadUrl.");
-                return;
+                url = defaultUrlFor(os);
+                if (url.isBlank()) {
+                    plugin.getLogger().warning("audio.autoDownloadFfmpeg=true but no default ffmpeg URL is available for this OS. Set audio.ffmpegDownloadUrl or audio.ffmpegDownloadUrlWindows/Linux.");
+                    return;
+                }
+                // Keep backwards-compatibility: if we used built-in defaults, persist them.
+                if (persistAutoFixes) {
+                    plugin.getConfig().set("audio.ffmpegDownloadUrl", url);
+                    plugin.saveConfig();
+                    persistedDefaultUrl = true;
+                    dbg(plugin, "audio.ffmpegDownloadUrl was blank; wrote default='" + url + "'");
+                }
             }
-            plugin.getConfig().set("audio.ffmpegDownloadUrl", url);
-            plugin.saveConfig();
-            dbg(plugin, "audio.ffmpegDownloadUrl was blank; wrote default='" + url + "'");
         }
 
         // If running on Linux but URL points to a Windows build, auto-correct.
@@ -102,9 +153,11 @@ public final class FfmpegInstaller {
             if (!corrected.isBlank()) {
                 plugin.getLogger().warning("audio.ffmpegDownloadUrl appears to be a Windows build on Linux; switching to a Linux build URL.");
                 url = corrected;
-                plugin.getConfig().set("audio.ffmpegDownloadUrl", url);
-                plugin.saveConfig();
-                dbg(plugin, "auto-corrected Windows URL to Linux default='" + url + "'");
+                if (persistAutoFixes && (fromOverrideUrl || persistedDefaultUrl)) {
+                    plugin.getConfig().set("audio.ffmpegDownloadUrl", url);
+                    plugin.saveConfig();
+                }
+                dbg(plugin, "auto-corrected Windows URL to Linux default='" + url + "' (persisted=" + (persistAutoFixes && (fromOverrideUrl || persistedDefaultUrl)) + ")");
             }
         }
 
@@ -115,17 +168,16 @@ public final class FfmpegInstaller {
             if (!corrected.isBlank()) {
                 plugin.getLogger().warning("audio.ffmpegDownloadUrl appears to be a Linux tar.* build on Windows; switching to a Windows build URL.");
                 url = corrected;
-                plugin.getConfig().set("audio.ffmpegDownloadUrl", url);
-                plugin.saveConfig();
-                dbg(plugin, "auto-corrected Linux URL to Windows default='" + url + "'");
+                if (persistAutoFixes && (fromOverrideUrl || persistedDefaultUrl)) {
+                    plugin.getConfig().set("audio.ffmpegDownloadUrl", url);
+                    plugin.saveConfig();
+                }
+                dbg(plugin, "auto-corrected Linux URL to Windows default='" + url + "' (persisted=" + (persistAutoFixes && (fromOverrideUrl || persistedDefaultUrl)) + ")");
             }
         }
 
-        if (mac && url.toLowerCase(Locale.ROOT).contains("win")) {
-            plugin.getLogger().warning("audio.ffmpegDownloadUrl looks like a Windows build. Please set a macOS ffmpeg URL or install ffmpeg via your system package manager.");
-        }
 
-        dbg(plugin, "selected download URL='" + url + "' (windows=" + windows + " linux=" + linux + " mac=" + mac + " arch=" + arch + ")");
+        dbg(plugin, "selected download URL='" + url + "' (windows=" + windows + " linux=" + linux + " arch=" + arch + ")");
 
         plugin.getLogger().warning("Downloading ffmpeg (3rd-party binary). By using audio.autoDownloadFfmpeg you accept the ffmpeg licensing terms.");
         plugin.getLogger().info("Downloading ffmpeg from: " + url);
@@ -146,7 +198,9 @@ public final class FfmpegInstaller {
                 }
             }
             plugin.getConfig().set("audio.ffmpegPath", ffmpegExe.toAbsolutePath().toString());
-            plugin.saveConfig();
+            if (persistAutoFixes) {
+                plugin.saveConfig();
+            }
             plugin.getLogger().info("ffmpeg installed to: " + ffmpegExe.toAbsolutePath());
             dbg(plugin, "install OK; set audio.ffmpegPath='" + ffmpegExe.toAbsolutePath() + "'");
         } else {
@@ -183,6 +237,23 @@ public final class FfmpegInstaller {
         }
     }
 
+    private static String selectConfiguredUrl(Karaoke plugin, boolean windows, boolean linux) {
+        if (plugin == null) {
+            return "";
+        }
+
+        String key = windows ? "audio.ffmpegDownloadUrlWindows" : (linux ? "audio.ffmpegDownloadUrlLinux" : "");
+        if (key.isBlank()) {
+            return "";
+        }
+        String url = String.valueOf(plugin.getConfig().getString(key, "")).trim();
+        if (url.isBlank()) {
+            return "";
+        }
+        dbg(plugin, "selected ffmpeg URL from '" + key + "'");
+        return url;
+    }
+
     private static void downloadAndInstallFfmpeg(Karaoke plugin, String url, Path installDir, boolean windows) throws Exception {
         Files.createDirectories(installDir);
 
@@ -211,7 +282,7 @@ public final class FfmpegInstaller {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(Duration.ofSeconds(timeoutSeconds))
-                .header("User-Agent", "KaraokePlugin/1.0")
+            .header("User-Agent", getUserAgent(plugin))
                 .GET()
                 .build();
 
@@ -424,7 +495,6 @@ public final class FfmpegInstaller {
             // Ubuntu 24.04 amd64 friendly static build (tar.xz)
             return "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz";
         }
-        // macOS: no default (varies widely). Recommend system package manager.
         return "";
     }
 

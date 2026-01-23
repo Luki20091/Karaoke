@@ -189,7 +189,8 @@ public final class PlaylistStore {
         }
         if (url != null && !url.isBlank() && key(existing.url()).equals(key(url))) {
             String newName = (name == null || name.isBlank()) ? existing.name() : name;
-            p.entries.set(idx, new PlaylistEntry(newName, existing.url(), existing.fileUrl(), cachedTitle, cachedAuthor));
+            String canonicalUrl = url.trim();
+            p.entries.set(idx, new PlaylistEntry(newName, canonicalUrl, existing.fileUrl(), cachedTitle, cachedAuthor));
         }
     }
 
@@ -203,12 +204,13 @@ public final class PlaylistStore {
             PlaylistEntry existing = p.entries.get(i);
             if (existing != null && key(existing.url()).equals(urlKey)) {
                 String newName = (name == null || name.isBlank()) ? existing.name() : name;
-                p.entries.set(i, new PlaylistEntry(newName, existing.url(), existing.fileUrl(), cachedTitle, cachedAuthor));
+                String canonicalUrl = url == null ? existing.url() : url.trim();
+                p.entries.set(i, new PlaylistEntry(newName, canonicalUrl, existing.fileUrl(), cachedTitle, cachedAuthor));
                 return;
             }
         }
         String newName = (name == null || name.isBlank()) ? "track" : name;
-        p.entries.add(new PlaylistEntry(newName, url, null, cachedTitle, cachedAuthor));
+        p.entries.add(new PlaylistEntry(newName, url == null ? null : url.trim(), null, cachedTitle, cachedAuthor));
     }
 
     /** Attach/replace the downloadable audio file URL for a specific slot (1-based). */

@@ -115,7 +115,7 @@ public final class Karaoke extends JavaPlugin {
 
             if ("MISSING".equals(source) && isSvcEnabled()) {
                 getLogger().warning("SVC audio is enabled but ffmpeg is missing. Karaoke audio will not play until ffmpeg is installed.");
-                getLogger().warning("Set audio.autoDownloadFfmpeg=true and audio.ffmpegDownloadUrl, or set audio.ffmpegPath to a valid binary.");
+                getLogger().warning("Set audio.autoDownloadFfmpeg=true and audio.ffmpegDownloadUrl (or audio.ffmpegDownloadUrlWindows/Linux), or set audio.ffmpegPath to a valid binary.");
             }
         } catch (Exception ignored) {
         }

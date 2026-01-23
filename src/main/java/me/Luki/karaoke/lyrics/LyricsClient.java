@@ -2,6 +2,7 @@ package me.Luki.karaoke.lyrics;
 
 import me.Luki.karaoke.Karaoke;
 import me.Luki.karaoke.meta.TrackInfo;
+import me.Luki.karaoke.util.ProgressListener;
 
 public class LyricsClient {
 
@@ -14,13 +15,17 @@ public class LyricsClient {
     }
 
     public TimedLyrics fetchLyrics(TrackInfo track) {
+        return fetchLyrics(track, null);
+    }
+
+    public TimedLyrics fetchLyrics(TrackInfo track, ProgressListener progress) {
         String title = track != null ? track.title() : null;
         String artist = track != null ? track.author() : null;
         plugin.debug().debug(() -> "Fetching lyrics for: " + (title != null ? title : "<null>") + " / " + (artist != null ? artist : "<null>"));
 
         boolean enabled = plugin.getConfig().getBoolean("lyrics.enabled", true);
         if (!enabled) {
-            return new PlaceholderTimedLyrics(plugin, track);
+            return new PlaceholderTimedLyrics(track);
         }
 
         try {
@@ -33,19 +38,19 @@ public class LyricsClient {
                 query = null;
             }
 
-            String lrc = lrclib.searchSyncedLrc(query);
+            String lrc = lrclib.searchSyncedLrc(query, progress);
             if (lrc == null || lrc.isBlank()) {
-                return new PlaceholderTimedLyrics(plugin, track);
+                return new PlaceholderTimedLyrics(track);
             }
 
             var parsed = LrcParser.parse(lrc);
             if (parsed.isEmpty()) {
-                return new PlaceholderTimedLyrics(plugin, track);
+                return new PlaceholderTimedLyrics(track);
             }
             return new LrcTimedLyrics(parsed);
         } catch (Exception e) {
             plugin.debug().warn("Lyrics fetch failed; using placeholder", e);
-            return new PlaceholderTimedLyrics(plugin, track);
+            return new PlaceholderTimedLyrics(track);
         }
     }
 }

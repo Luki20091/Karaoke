@@ -36,6 +36,14 @@ public class KaraokeSession {
     private boolean announced;
     private boolean stopped;
 
+    private String lastHeaderTitle;
+    private boolean lastHeaderPaused;
+    private boolean headerDirty;
+
+    private Component lastTopLine;
+    private Component lastMiddleLine;
+    private Component lastBottomLine;
+
     private boolean paused;
     private long pausedAtMillis;
     private long pausedTotalMillis;
@@ -57,6 +65,13 @@ public class KaraokeSession {
         this.pausedTotalMillis = 0L;
         this.audioOrigin = null;
         this.pausedAudioElapsedMs = 0L;
+
+        this.lastHeaderTitle = null;
+        this.lastHeaderPaused = false;
+        this.headerDirty = true;
+        this.lastTopLine = null;
+        this.lastMiddleLine = null;
+        this.lastBottomLine = null;
     }
 
     public void start() {
@@ -82,13 +97,15 @@ public class KaraokeSession {
                 Math.round(placement.baseLocation().getX()) + "," + Math.round(placement.baseLocation().getY()) + "," + Math.round(placement.baseLocation().getZ()));
 
         // Initial render (often placeholder while we fetch metadata/lyrics)
+        headerDirty = true;
+        updateHologramHeader();
+
         TrackInfo initialTrack = this.track;
-        String title = initialTrack != null && initialTrack.title() != null ? initialTrack.title() : "(ładowanie…)";
         String author = initialTrack != null && initialTrack.author() != null ? initialTrack.author() : (initialTrack != null ? initialTrack.source() : "link");
-        hologram.setLines(
-                Component.text(title, NamedTextColor.GOLD),
-                Component.text(author, NamedTextColor.GRAY),
-                Component.text("", NamedTextColor.GRAY)
+        hologram.setLyricsLines(
+            Component.text("", NamedTextColor.GRAY),
+            Component.text(author, NamedTextColor.GRAY),
+            Component.text("", NamedTextColor.GRAY)
         );
 
         this.task = plugin.getServer().getScheduler().runTaskTimer(plugin, () -> tick(), 1L, 2L);
@@ -111,7 +128,20 @@ public class KaraokeSession {
 
             TimedLyrics currentLyrics = this.lyrics;
             TimedLyrics.RenderState state = currentLyrics.render(elapsedMs, highlightColor.named(), NamedTextColor.GRAY, NamedTextColor.WHITE);
-            hologram.setLines(state.top(), state.middle(), state.bottom());
+
+            updateHologramHeader();
+
+            Component top = state.top();
+            Component middle = state.middle();
+            Component bottom = state.bottom();
+            if (lastTopLine == null || !lastTopLine.equals(top)
+                    || lastMiddleLine == null || !lastMiddleLine.equals(middle)
+                    || lastBottomLine == null || !lastBottomLine.equals(bottom)) {
+                hologram.setLyricsLines(top, middle, bottom);
+                lastTopLine = top;
+                lastMiddleLine = middle;
+                lastBottomLine = bottom;
+            }
 
             if (!paused) {
                 long maxDurationMs = Math.max(1L, plugin.getConfig().getLong("karaoke.maxDurationSeconds", 600L) * 1000L);
@@ -130,6 +160,50 @@ public class KaraokeSession {
         }
     }
 
+    private void updateHologramHeader() {
+        if (hologram == null) {
+            return;
+        }
+
+        TrackInfo currentTrack = this.track;
+        String title = (currentTrack != null && currentTrack.title() != null) ? currentTrack.title() : "(ładowanie…)";
+        boolean pausedNow = paused;
+
+        if (!headerDirty && lastHeaderTitle != null && lastHeaderTitle.equals(title) && lastHeaderPaused == pausedNow) {
+            return;
+        }
+        String status;
+        if (pausedNow) {
+            status = plugin.getConfig().getString("hologram.statusPaused", "Zatrzymany");
+        } else {
+            status = plugin.getConfig().getString("hologram.statusPlaying", "Gra");
+        }
+
+        String nowPlayingTemplate = plugin.getConfig().getString(
+            "hologram.headerNowPlaying",
+            "&fAktualnie grający tytuł: &6{title} &7- {status}"
+        );
+        String eventTemplate = plugin.getConfig().getString(
+            "hologram.headerEvent",
+            "&7Event Karaoke StremCraft III"
+        );
+
+        Component nowPlaying = plugin.messages().format(nowPlayingTemplate,
+            "title", title,
+            "status", status
+        );
+        Component event = plugin.messages().format(eventTemplate,
+            "title", title,
+            "status", status
+        );
+
+        hologram.setHeaderLines(nowPlaying, event);
+
+        lastHeaderTitle = title;
+        lastHeaderPaused = pausedNow;
+        headerDirty = false;
+    }
+
     public boolean isPaused() {
         return paused;
     }
@@ -140,6 +214,8 @@ public class KaraokeSession {
         }
         paused = true;
         pausedAtMillis = System.currentTimeMillis();
+
+        headerDirty = true;
 
         pausedAudioElapsedMs = Math.max(0L, pausedAtMillis - startMillis - pausedTotalMillis);
 
@@ -163,6 +239,8 @@ public class KaraokeSession {
         paused = false;
         pausedAtMillis = 0L;
 
+        headerDirty = true;
+
         // Resume audio from the paused offset.
         try {
             if (audioFile != null && plugin.voiceBridge() != null && audioOrigin != null && audioOrigin.getWorld() != null) {
@@ -174,14 +252,17 @@ public class KaraokeSession {
     }
 
     public void updateTrackAndLyrics(TrackInfo newTrack, TimedLyrics newLyrics, boolean announce) {
-        if (hologram == null) {
-            return;
-        }
         if (newTrack != null) {
             this.track = newTrack;
+            headerDirty = true;
         }
         if (newLyrics != null) {
             this.lyrics = newLyrics;
+        }
+
+        // If hologram is already created, force an immediate header refresh.
+        if (hologram != null) {
+            updateHologramHeader();
         }
 
         if (announce && !announced && newTrack != null && player != null && player.isOnline()) {
@@ -224,6 +305,12 @@ public class KaraokeSession {
             }
             hologram = null;
         }
+
+        lastTopLine = null;
+        lastMiddleLine = null;
+        lastBottomLine = null;
+        lastHeaderTitle = null;
+        headerDirty = true;
 
         try {
             if (onStop != null) {

@@ -10,6 +10,7 @@ import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
+import org.jetbrains.annotations.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -24,22 +25,39 @@ public class KaraokeHologram implements AutoCloseable {
     private final List<String> hologramNames;
     private final String[] lastLines;
 
+    private static final int LYRICS_BOTTOM = 0;
+    private static final int LYRICS_MIDDLE = 1;
+    private static final int LYRICS_TOP = 2;
+    private static final int HEADER_EVENT = 3;
+    private static final int HEADER_NOW_PLAYING = 4;
+
     public KaraokeHologram(Karaoke plugin, KaraokePlacement placement) {
         this.plugin = plugin;
         this.manager = FancyHologramsPlugin.get().getHologramManager();
-        this.holograms = new ArrayList<>(3);
-        this.hologramNames = new ArrayList<>(3);
-        this.lastLines = new String[] { null, null, null };
+        this.holograms = new ArrayList<>(5);
+        this.hologramNames = new ArrayList<>(5);
+        this.lastLines = new String[] { null, null, null, null, null };
 
         Location base = placement.baseLocation().clone();
         double lineSpacing = placement.lineSpacing();
+        double headerSpacing = placement.headerSpacing();
 
         // Unique prefix so multiple players can run karaoke at the same time
         String prefix = "karaoke_" + UUID.randomUUID() + "_";
 
-        // 3 lines, 3 blocks tall (bottom/middle/top)
-        for (int i = 0; i < 3; i++) {
-            Location lineLoc = base.clone().add(0D, i * lineSpacing, 0D);
+        // 5 lines total:
+        // - 3 lyrics lines (bottom/middle/top)
+        // - 2 header lines above lyrics, with extra gap (headerSpacing) between header and lyrics
+        double[] yOffsets = new double[] {
+                0D,
+                1D * lineSpacing,
+                2D * lineSpacing,
+                2D * lineSpacing + headerSpacing,
+                2D * lineSpacing + headerSpacing + lineSpacing
+        };
+
+        for (int i = 0; i < yOffsets.length; i++) {
+            Location lineLoc = base.clone().add(0D, yOffsets[i], 0D);
             String name = prefix + i;
 
             TextHologramData data = new TextHologramData(name, lineLoc);
@@ -60,11 +78,20 @@ public class KaraokeHologram implements AutoCloseable {
         }
     }
 
-    public void setLines(Component top, Component middle, Component bottom) {
-        // We created bottom->top as i=0..2
-        setLine(2, top);
-        setLine(1, middle);
-        setLine(0, bottom);
+    public void setHeaderLines(@Nullable Component nowPlaying, @Nullable Component eventLine) {
+        if (nowPlaying != null) {
+            setLine(HEADER_NOW_PLAYING, nowPlaying);
+        }
+        if (eventLine != null) {
+            setLine(HEADER_EVENT, eventLine);
+        }
+    }
+
+    public void setLyricsLines(Component top, Component middle, Component bottom) {
+        // We created bottom->top for lyrics as i=0..2
+        setLine(LYRICS_TOP, top);
+        setLine(LYRICS_MIDDLE, middle);
+        setLine(LYRICS_BOTTOM, bottom);
     }
 
     private void setLine(int index, Component component) {

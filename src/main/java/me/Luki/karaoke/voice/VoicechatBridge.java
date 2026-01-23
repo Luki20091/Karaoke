@@ -163,6 +163,11 @@ public final class VoicechatBridge implements VoicechatPlugin, VoiceBridge {
             supplier = new ToneSupplier(durationMs, frequencyHz, amplitude);
         }
 
+        double volume = clamp(plugin.getConfig().getDouble("svc.volume", 1.0), 0.0, 2.0);
+        if (volume != 1.0) {
+            supplier = new VolumeSupplier(supplier, volume);
+        }
+
         AudioPlayer player = api.createAudioPlayer(channel, encoder, supplier);
 
         Playback playback = new Playback(channel, encoder, player, ffmpegSupplier);
@@ -344,6 +349,35 @@ public final class VoicechatBridge implements VoicechatPlugin, VoiceBridge {
                 if (phase > (2.0 * Math.PI)) {
                     phase -= (2.0 * Math.PI);
                 }
+            }
+            return frame;
+        }
+    }
+
+    private static final class VolumeSupplier implements Supplier<short[]> {
+
+        private final Supplier<short[]> delegate;
+        private final double gain;
+
+        private VolumeSupplier(Supplier<short[]> delegate, double gain) {
+            this.delegate = delegate;
+            this.gain = gain;
+        }
+
+        @Override
+        public short[] get() {
+            short[] frame = delegate.get();
+            if (frame == null) {
+                return null;
+            }
+            for (int i = 0; i < frame.length; i++) {
+                int v = (int) Math.round(frame[i] * gain);
+                if (v > Short.MAX_VALUE) {
+                    v = Short.MAX_VALUE;
+                } else if (v < Short.MIN_VALUE) {
+                    v = Short.MIN_VALUE;
+                }
+                frame[i] = (short) v;
             }
             return frame;
         }

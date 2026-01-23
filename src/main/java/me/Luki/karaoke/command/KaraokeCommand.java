@@ -187,6 +187,18 @@ public class KaraokeCommand implements CommandExecutor {
         if (args.length == 2) {
             // /karaoke play <...>
             if ("play".equalsIgnoreCase(args[0])) {
+                String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+                try {
+                    var store = karaokeService != null ? karaokeService.getPlaylistStore() : null;
+                    if (store != null) {
+                        for (String name : store.listNames()) {
+                            if (name != null && name.toLowerCase(Locale.ROOT).startsWith(prefix)) {
+                                out.add(name);
+                            }
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
                 return out;
             }
 

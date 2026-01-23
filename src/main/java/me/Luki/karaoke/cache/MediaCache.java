@@ -4,6 +4,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import me.Luki.karaoke.Karaoke;
+import me.Luki.karaoke.util.ProgressListener;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -201,6 +202,10 @@ public final class MediaCache {
     }
 
     public CompletableFuture<CachedItem> prefetchAudio(String url) {
+        return prefetchAudio(url, null);
+    }
+
+    public CompletableFuture<CachedItem> prefetchAudio(String url, ProgressListener progress) {
         if (!plugin.getConfig().getBoolean("cache.enabled", true)) {
             return CompletableFuture.failedFuture(new IllegalStateException("cache.disabled"));
         }
@@ -227,9 +232,9 @@ public final class MediaCache {
                 Path downloaded;
                 if (isFileUri(key)) {
                     Path local = resolveLocalLibraryFile(fileUriToPath(key));
-                    downloaded = importLocalToCache(key, local);
+                    downloaded = importLocalToCache(key, local, progress);
                 } else {
-                    downloaded = downloadToCache(key);
+                    downloaded = downloadToCache(key, progress);
                 }
                 long bytes = Files.size(downloaded);
 
@@ -254,7 +259,7 @@ public final class MediaCache {
         }));
     }
 
-    private Path downloadToCache(String url) throws Exception {
+    private Path downloadToCache(String url, ProgressListener progress) throws Exception {
         String extFromUrl = guessExtension(url);
 
         long maxSingleBytes = Math.max(1L, plugin.getConfig().getLong("cache.maxSingleBytes", 1024L * 1024L * 1024L));
@@ -267,7 +272,7 @@ public final class MediaCache {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create(url))
                 .timeout(Duration.ofSeconds(timeoutSeconds))
-                .header("User-Agent", plugin.getConfig().getString("cache.userAgent", "KaraokePlugin/1.0"))
+            .header("User-Agent", getUserAgent())
                 .GET()
                 .build();
 
@@ -295,12 +300,19 @@ public final class MediaCache {
                 byte[] buf = new byte[1024 * 64];
                 long total = 0L;
                 int r;
+                if (progress != null) {
+                    progress.onProgress(0L, contentLen);
+                }
                 while ((r = in.read(buf)) != -1) {
                     total += r;
                     if (total > maxSingleBytes) {
                         throw new IllegalStateException("File too large (exceeded limit)");
                     }
                     outStream.write(buf, 0, r);
+
+                    if (progress != null) {
+                        progress.onProgress(total, contentLen);
+                    }
                 }
             }
             Files.move(tmp, out, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -315,7 +327,7 @@ public final class MediaCache {
         return out;
     }
 
-    private Path importLocalToCache(String key, Path localFile) throws Exception {
+    private Path importLocalToCache(String key, Path localFile, ProgressListener progress) throws Exception {
         String ext = guessExtension(localFile.getFileName().toString());
         if (!isAllowedExtension(ext)) {
             throw new IllegalArgumentException("Unsupported local file type. Allowed: mp3, ogg");
@@ -333,7 +345,23 @@ public final class MediaCache {
 
         Files.createDirectories(audioDir);
         try {
-            Files.copy(localFile, tmp, StandardCopyOption.REPLACE_EXISTING);
+            if (progress != null) {
+                progress.onProgress(0L, size);
+            }
+
+            try (InputStream in = Files.newInputStream(localFile);
+                 var outStream = Files.newOutputStream(tmp)) {
+                byte[] buf = new byte[1024 * 64];
+                long total = 0L;
+                int r;
+                while ((r = in.read(buf)) != -1) {
+                    total += r;
+                    outStream.write(buf, 0, r);
+                    if (progress != null) {
+                        progress.onProgress(total, size);
+                    }
+                }
+            }
             Files.move(tmp, out, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (Exception e) {
             try {
@@ -347,15 +375,12 @@ public final class MediaCache {
 
     public synchronized void enforceMaxSize() {
         long maxBytes = Math.max(1L, plugin.getConfig().getLong("cache.maxBytes", 10L * 1024L * 1024L * 1024L));
+        int maxFiles = Math.max(0, plugin.getConfig().getInt("cache.maxFiles", 0));
 
         long total = indexByUrl.values().stream()
                 .filter(i -> i != null && i.status == Status.READY)
                 .mapToLong(i -> Math.max(0L, i.audioBytes))
                 .sum();
-
-        if (total <= maxBytes) {
-            return;
-        }
 
         // Evict least-recently-used first
         var entries = indexByUrl.entrySet().stream()
@@ -363,10 +388,18 @@ public final class MediaCache {
                 .sorted((a, b) -> Long.compare(a.getValue().lastAccessMillis, b.getValue().lastAccessMillis))
                 .toList();
 
+        int currentFiles = entries.size();
         for (var e : entries) {
-            if (total <= maxBytes) {
+            if (maxFiles > 0 && currentFiles <= maxFiles && total <= maxBytes) {
                 break;
             }
+
+            boolean needEvictForFiles = maxFiles > 0 && currentFiles > maxFiles;
+            boolean needEvictForBytes = total > maxBytes;
+            if (!needEvictForFiles && !needEvictForBytes) {
+                break;
+            }
+
             CachedItem item = e.getValue();
             Path audio = resolveAudioPath(item);
             try {
@@ -381,7 +414,18 @@ public final class MediaCache {
             item.status = Status.EVICTED;
             item.audioRelativePath = null;
             item.audioBytes = 0L;
+            currentFiles--;
         }
+    }
+
+    private String getUserAgent() {
+        String ua = String.valueOf(plugin.getConfig().getString("http.userAgent", "")).trim();
+        if (!ua.isBlank()) {
+            return ua;
+        }
+        // Backwards-compatibility
+        String legacy = String.valueOf(plugin.getConfig().getString("cache.userAgent", "")).trim();
+        return legacy.isBlank() ? "KaraokePlugin/1.0" : legacy;
     }
 
     private void saveSafe() {

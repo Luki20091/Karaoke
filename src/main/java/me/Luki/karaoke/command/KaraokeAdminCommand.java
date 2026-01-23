@@ -1,12 +1,15 @@
 package me.Luki.karaoke.command;
 
 import me.Luki.karaoke.Karaoke;
+import me.Luki.karaoke.audio.FfmpegInstaller;
 import me.Luki.karaoke.service.KaraokeService;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.jetbrains.annotations.NotNull;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -107,6 +110,26 @@ public class KaraokeAdminCommand implements CommandExecutor {
                 int timeout = Math.max(1, plugin.getConfig().getInt("metadata.timeoutSeconds", 10));
                 long ttl = Math.max(0L, plugin.getConfig().getLong("metadata.cacheTtlSeconds", 3600L));
 
+                String ffmpegPath = String.valueOf(plugin.getConfig().getString("audio.ffmpegPath", "ffmpeg")).trim();
+                boolean ffmpegAutoDownload = plugin.getConfig().getBoolean("audio.autoDownloadFfmpeg", false);
+                String ffmpegUrl = FfmpegInstaller.selectDownloadUrlNoSideEffects(plugin);
+
+                String os = String.valueOf(System.getProperty("os.name", "")).toLowerCase(Locale.ROOT);
+                boolean windows = os.contains("win");
+                Path installDir = plugin.getDataFolder().toPath().resolve("tools").resolve("ffmpeg");
+                Path bundled = installDir.resolve(windows ? "ffmpeg.exe" : "ffmpeg");
+
+                String ffmpegSource;
+                if (!ffmpegPath.equalsIgnoreCase("ffmpeg")) {
+                    ffmpegSource = Files.exists(Path.of(ffmpegPath)) ? "CONFIG" : "CONFIG_MISSING";
+                } else if (FfmpegInstaller.isFfmpegOnPath()) {
+                    ffmpegSource = "PATH";
+                } else if (Files.exists(bundled)) {
+                    ffmpegSource = "BUNDLED";
+                } else {
+                    ffmpegSource = "MISSING";
+                }
+
                 boolean svcEnabled = plugin.isSvcEnabled();
                 boolean svcHooked = plugin.isSvcHooked();
                 String svcHost = plugin.getSvcHost();
@@ -114,12 +137,16 @@ public class KaraokeAdminCommand implements CommandExecutor {
                 int svcDistance = (int) Math.max(0D, plugin.getSvcDistanceBlocks());
 
                 plugin.messages().send(sender, "adminStatus",
-                    "&7Status: &fdebug={debug} http={http} radius={radius} timeout={timeout}s cacheTtl={ttl}s svc={svcEnabled} hooked={svcHooked} host={svcHost} port={svcPort} dist={svcDistance}",
+                    "&7Status: &fdebug={debug} http={http} radius={radius} timeout={timeout}s cacheTtl={ttl}s ffmpeg={ffmpegSource} ffmpegPath={ffmpegPath} autoDl={ffmpegAutoDownload} ffmpegUrl={ffmpegUrl} svc={svcEnabled} hooked={svcHooked} host={svcHost} port={svcPort} dist={svcDistance}",
                         "debug", String.valueOf(debugEnabled),
                         "http", String.valueOf(debugHttp),
                         "radius", String.valueOf(radius),
                         "timeout", String.valueOf(timeout),
                     "ttl", String.valueOf(ttl),
+                    "ffmpegSource", String.valueOf(ffmpegSource),
+                    "ffmpegPath", String.valueOf(ffmpegPath),
+                    "ffmpegAutoDownload", String.valueOf(ffmpegAutoDownload),
+                    "ffmpegUrl", String.valueOf(ffmpegUrl),
                     "svcEnabled", String.valueOf(svcEnabled),
                     "svcHooked", String.valueOf(svcHooked),
                     "svcHost", String.valueOf(svcHost),
