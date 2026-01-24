@@ -1058,6 +1058,41 @@ public class PlaylistCommand implements CommandExecutor {
             return out;
         }
 
+        // Suggest IDs for addfile/setfile
+        // legacy: /playlist addfile <playlist> <id> ...
+        // playlist-first: /playlist <playlist> addfile <id> ...
+        if (args.length == 3) {
+            String a0 = args[0] == null ? "" : args[0].toLowerCase(Locale.ROOT);
+            String a1 = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+
+            boolean legacy = "addfile".equals(a0) || "setfile".equals(a0);
+            boolean playlistFirst = "addfile".equals(a1) || "setfile".equals(a1);
+
+            String playlistName = null;
+            if (legacy) {
+                playlistName = args[1];
+            } else if (playlistFirst) {
+                playlistName = args[0];
+            }
+
+            if (playlistName != null && !playlistName.isBlank()) {
+                Playlist p = store.get(playlistName.trim());
+                if (p != null) {
+                    String prefix = args[2] == null ? "" : args[2].trim();
+                    int size = p.entries() != null ? p.entries().size() : 0;
+                    for (int i = 1; i <= size; i++) {
+                        String id = String.valueOf(i);
+                        if (prefix.isEmpty() || id.startsWith(prefix)) {
+                            out.add(id);
+                        }
+                    }
+                }
+            }
+            if (!out.isEmpty()) {
+                return out;
+            }
+        }
+
         return out;
     }
 
