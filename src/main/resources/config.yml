@@ -31,7 +31,7 @@ karaoke:
 
   # Safety limit: deny starting new sessions when too many are already active.
   # 0 = unlimited.
-  maxConcurrentSessions: 0
+  maxConcurrentSessions: 20
 
 ui:
   actionbar:
@@ -45,9 +45,9 @@ ui:
 
 debug:
   # Enables extra logging in console
-  enabled: true
+  enabled: false
   # Log outgoing HTTP calls/statuses (only if debug.enabled=true)
-  http: true
+  http: false
 
 http:
   # Default User-Agent used for all outgoing HTTP requests (ffmpeg/metadata/lyrics/cache)
@@ -147,12 +147,12 @@ svc:
   
   # For status/diagnostics only (SVC itself is configured separately).
   # If host is blank and address is provided, the plugin will display svc.address.
-  host: 172.19.32.1
-  port: 24454
+  host: 0.0.0.0
+  port: 35133
   address: ''
   
   # How far (in blocks) players can hear the karaoke audio.
-  distanceBlocks: 20
+  distanceBlocks: 30
   
   # Logs a one-time "hooked" message when the SVC API is available.
   logHook: true
@@ -168,7 +168,7 @@ voicechat:
   # Legacy config keys kept for backwards-compatibility.
   # Prefer the svc.* section above.
   enabled: true
-  distance: 50
+  distance: 30
 
 messages:
   onlyPlayers: '&cTa komenda jest tylko dla graczy.'
@@ -274,5 +274,5 @@ messages:
 # 2,https://www.youtube.com/watch?v=dQw4w9WgXcQ,https://www.dropbox.com/another.mp3?dl=1
 #
 # Import:
-# /playlist import test2 https://www.dropbox.com/s/XXXXXXXX/import.csv?dl=1
+# /playlist import test2 https://www.dropbox.com/scl/fi/5l65czpz6yz6wthpay6st/playlista_streamcraft.csv?rlkey=wah72rsolfjp72moz8omce5qj&st=sr3cqq5z&dl=1
 # /karaoke play test2 czerwony
