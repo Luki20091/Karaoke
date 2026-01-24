@@ -22,11 +22,11 @@ public final class Messages {
     }
 
     public void send(@NotNull CommandSender sender, @NotNull String key, @NotNull String fallback) {
-        sender.sendMessage(get(key, fallback));
+        sender.sendMessage(chat(getRaw(key, fallback)));
     }
 
     public void send(@NotNull CommandSender sender, @NotNull String key, @NotNull String fallback, Object... placeholders) {
-        sender.sendMessage(format(getRaw(key, fallback), placeholders));
+        sender.sendMessage(chat(formatRaw(getRaw(key, fallback), placeholders)));
     }
 
     public void actionBar(@NotNull Player player, @NotNull String key, @NotNull String fallback, Object... placeholders) {
@@ -54,6 +54,10 @@ public final class Messages {
     }
 
     public Component format(@NotNull String raw, Object... placeholders) {
+        return colorize(formatRaw(raw, placeholders));
+    }
+
+    private String formatRaw(@NotNull String raw, Object... placeholders) {
         String message = raw;
         if (placeholders != null && placeholders.length > 0) {
             if (placeholders.length % 2 != 0) {
@@ -67,7 +71,24 @@ public final class Messages {
             }
             message = applyPlaceholders(message, map);
         }
-        return colorize(message);
+        return message;
+    }
+
+    private Component chat(@NotNull String rawMessage) {
+        String prefix = String.valueOf(plugin.getConfig().getString("messages.prefix", "")).trim();
+        if (prefix.isEmpty()) {
+            return colorize(rawMessage);
+        }
+
+        // Prefix supports legacy & color codes.
+        // We keep it as raw text and colorize once to preserve formatting.
+        String combined;
+        if (prefix.endsWith(" ")) {
+            combined = prefix + rawMessage;
+        } else {
+            combined = prefix + " " + rawMessage;
+        }
+        return colorize(combined);
     }
 
     private String getRaw(@NotNull String key, @NotNull String fallback) {

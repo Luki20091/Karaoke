@@ -179,6 +179,9 @@ public class KaraokeSession {
             status = plugin.getConfig().getString("hologram.statusPlaying", "Gra");
         }
 
+        String accent = highlightColor != null ? highlightColor.legacyAmpersandCode() : "&d";
+        status = applyAccent(status, accent);
+
         String nowPlayingTemplate = plugin.getConfig().getString(
             "hologram.headerNowPlaying",
             "&fAktualnie grający tytuł: &6{title} &7- {status}"
@@ -188,13 +191,18 @@ public class KaraokeSession {
             "&7Event Karaoke StremCraft III"
         );
 
+        nowPlayingTemplate = applyAccent(nowPlayingTemplate, accent);
+        eventTemplate = applyAccent(eventTemplate, accent);
+
         Component nowPlaying = plugin.messages().format(nowPlayingTemplate,
             "title", title,
-            "status", status
+            "status", status,
+            "accent", accent
         );
         Component event = plugin.messages().format(eventTemplate,
             "title", title,
-            "status", status
+            "status", status,
+            "accent", accent
         );
 
         hologram.setHeaderLines(nowPlaying, event);
@@ -202,6 +210,18 @@ public class KaraokeSession {
         lastHeaderTitle = title;
         lastHeaderPaused = pausedNow;
         headerDirty = false;
+    }
+
+    private static String applyAccent(String raw, String accent) {
+        if (raw == null || raw.isBlank() || accent == null || accent.isBlank()) {
+            return raw;
+        }
+
+        // Support explicit placeholder and also "upgrade" old configs that hard-coded "&d".
+        String out = raw.replace("{accent}", accent);
+        out = out.replace("&d", accent).replace("&D", accent);
+        out = out.replace("§d", accent).replace("§D", accent);
+        return out;
     }
 
     public boolean isPaused() {

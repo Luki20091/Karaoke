@@ -175,7 +175,8 @@ public class KaraokeCommand implements CommandExecutor {
             try {
                 color = KaraokeTextColor.fromPolish(args[2]);
             } catch (IllegalArgumentException e) {
-                karaokeService.getPlugin().messages().send(player, "invalidColor", "&cNieprawidłowy kolor. Użyj: czerwony/zielony/niebieski");
+                karaokeService.getPlugin().messages().send(player, "invalidColor",
+                        "&cNieprawidłowy kolor. Użyj koloru MC (np. czerwony, zielony, niebieski, zolty, rozowy, czarny)");
                 return true;
             }
 
@@ -211,7 +212,8 @@ public class KaraokeCommand implements CommandExecutor {
         try {
             color = KaraokeTextColor.fromPolish(args[1]);
         } catch (IllegalArgumentException e) {
-            karaokeService.getPlugin().messages().send(player, "invalidColor", "&cNieprawidłowy kolor. Użyj: czerwony/zielony/niebieski");
+            karaokeService.getPlugin().messages().send(player, "invalidColor",
+                    "&cNieprawidłowy kolor. Użyj koloru MC (np. czerwony, zielony, niebieski, zolty, rozowy, czarny)");
             return true;
         }
 
@@ -297,7 +299,7 @@ public class KaraokeCommand implements CommandExecutor {
 
             // /karaoke <link> <color>
             String prefix = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
-            for (String c : List.of("czerwony", "zielony", "niebieski")) {
+            for (String c : KaraokeTextColor.suggestedPolishNames()) {
                 if (c.startsWith(prefix)) {
                     out.add(c);
                 }
@@ -308,7 +310,7 @@ public class KaraokeCommand implements CommandExecutor {
         if (args.length == 3 && "play".equalsIgnoreCase(args[0])) {
             // /karaoke play <link|playlist> <color>
             String prefix = args[2] == null ? "" : args[2].toLowerCase(Locale.ROOT);
-            for (String c : List.of("czerwony", "zielony", "niebieski")) {
+            for (String c : KaraokeTextColor.suggestedPolishNames()) {
                 if (c.startsWith(prefix)) {
                     out.add(c);
                 }

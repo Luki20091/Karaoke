@@ -11,6 +11,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 import org.jetbrains.annotations.Nullable;
+import org.joml.Vector3f;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -38,6 +39,19 @@ public class KaraokeHologram implements AutoCloseable {
         this.hologramNames = new ArrayList<>(5);
         this.lastLines = new String[] { null, null, null, null, null };
 
+        boolean seeThrough = plugin.getConfig().getBoolean("hologram.seeThrough", true);
+        int visibilityDistanceBlocks = plugin.getConfig().getInt("hologram.visibilityDistanceBlocks",
+                plugin.getConfig().getInt("hologram.viewRangeBlocks", -1));
+        double textScaleRaw = plugin.getConfig().getDouble("hologram.textScale", 1.0D);
+        float textScale = (float) Math.max(0.01D, Math.min(10.0D, textScaleRaw));
+        Vector3f scaleVec = new Vector3f(textScale, textScale, textScale);
+        if (visibilityDistanceBlocks < -1) {
+            visibilityDistanceBlocks = -1;
+        }
+        if (visibilityDistanceBlocks == 0) {
+            visibilityDistanceBlocks = -1;
+        }
+
         Location base = placement.baseLocation().clone();
         double lineSpacing = placement.lineSpacing();
         double headerSpacing = placement.headerSpacing();
@@ -62,7 +76,9 @@ public class KaraokeHologram implements AutoCloseable {
 
             TextHologramData data = new TextHologramData(name, lineLoc);
             data.setPersistent(false);
-            data.setSeeThrough(true);
+            data.setSeeThrough(seeThrough);
+            data.setVisibilityDistance(visibilityDistanceBlocks);
+            data.setScale(scaleVec);
             data.setTextAlignment(org.bukkit.entity.TextDisplay.TextAlignment.CENTER);
             data.setBillboard(org.bukkit.entity.Display.Billboard.FIXED);
             data.setText(List.of(""));
@@ -73,9 +89,9 @@ public class KaraokeHologram implements AutoCloseable {
             hologramNames.add(name);
         }
 
-        if (plugin != null) {
-            plugin.debug().debug(() -> "Created FancyHolograms hologram stack (3 lines) prefix=" + prefix);
-        }
+        plugin.debug().debug("Created FancyHolograms hologram stack (5 lines) prefix=" + prefix
+            + " seeThrough=" + seeThrough + " visibilityDistanceBlocks=" + visibilityDistanceBlocks
+            + " textScale=" + textScale);
     }
 
     public void setHeaderLines(@Nullable Component nowPlaying, @Nullable Component eventLine) {

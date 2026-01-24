@@ -348,7 +348,8 @@ public class PlaylistCommand implements CommandExecutor {
                 try {
                     me.Luki.karaoke.service.KaraokeTextColor.fromPolish(colorRaw);
                 } catch (IllegalArgumentException e) {
-                    plugin.messages().send(sender, "invalidColor", "&cNieprawidłowy kolor. Użyj: czerwony/zielony/niebieski");
+                    plugin.messages().send(sender, "invalidColor",
+                            "&cNieprawidłowy kolor. Użyj koloru MC (np. czerwony, zielony, niebieski, zolty, rozowy, czarny)");
                     return true;
                 }
                 plugin.getServer().getScheduler().runTask(plugin, () -> plugin.getServer().dispatchCommand(player, "karaoke play " + pl + " " + colorRaw));
@@ -381,7 +382,8 @@ public class PlaylistCommand implements CommandExecutor {
         Path out = outDir.resolve(base + "-" + ts + ".csv");
 
         StringBuilder sb = new StringBuilder();
-        sb.append("id,yt_link,file_link\n");
+        final String nl = "\r\n";
+        sb.append("id;yt_link;file_link").append(nl);
         List<PlaylistEntry> entries = p.entries();
         for (int i = 0; i < entries.size(); i++) {
             PlaylistEntry e = entries.get(i);
@@ -389,11 +391,11 @@ public class PlaylistCommand implements CommandExecutor {
             String yt = e != null ? String.valueOf(e.url()) : "";
             String file = (e != null && e.fileUrl() != null) ? e.fileUrl() : "";
             sb.append(id)
-                    .append(',')
+                .append(';')
                     .append(csvField(yt))
-                    .append(',')
+                .append(';')
                     .append(csvField(file))
-                    .append('\n');
+                .append(nl);
         }
 
         try {
@@ -1050,7 +1052,7 @@ public class PlaylistCommand implements CommandExecutor {
 
         if (args.length == 3 && "play".equalsIgnoreCase(args[0])) {
             String prefix = args[2] == null ? "" : args[2].toLowerCase(Locale.ROOT);
-            for (String c : List.of("czerwony", "zielony", "niebieski")) {
+            for (String c : me.Luki.karaoke.service.KaraokeTextColor.suggestedPolishNames()) {
                 if (c.startsWith(prefix)) {
                     out.add(c);
                 }

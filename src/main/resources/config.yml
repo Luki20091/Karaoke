@@ -125,16 +125,28 @@ hologram:
   
   # Header texts (supports legacy & color codes).
   # Placeholders: {title}, {status}
-  headerNowPlaying: '&fTytuł: &6{title} &f- {status}'
-  headerEvent: '&fEvent Karaoke StremCraft III'
+  headerNowPlaying: '&fTytuł: {accent}{title} &f- {status}'
+  headerEvent: '&f♫ {accent}Event Karaoke - StremCraft III &f♫'
   
   # Status placeholders used in headerNowPlaying ({status})
-  statusPlaying: Gra
-  statusPaused: Zatrzymany
+  statusPlaying: 'Gra'
+  statusPaused: 'Przerwa'
   # 3 lines -> 3 blocks tall (distance between lines)
   lineSpacing: 0.5
   # Optional yaw offset to make the text face the player (try 180 if it's reversed)
   yawOffset: 180.0
+
+  # If true, hologram text is rendered see-through (visible through blocks/players).
+  # This maps to FancyHolograms TextHologramData#setSeeThrough.
+  seeThrough: false
+
+  # How far away (in blocks) the hologram is visible.
+  # -1 = use FancyHolograms default visibility distance.
+  visibilityDistanceBlocks: 50
+
+  # Uniform scale for hologram text (TextDisplay scale).
+  # 1.0 = default size, 0.8 = smaller, 1.2 = bigger.
+  textScale: 1.2
 
 svc:
   # Simple Voice Chat integration (optional)
@@ -159,7 +171,7 @@ svc:
   address: ''
   
   # How far (in blocks) players can hear the karaoke audio.
-  distanceBlocks: 30
+  distanceBlocks: 40
   
   # Logs a one-time "hooked" message when the SVC API is available.
   logHook: true
@@ -175,9 +187,13 @@ voicechat:
   # Legacy config keys kept for backwards-compatibility.
   # Prefer the svc.* section above.
   enabled: true
-  distance: 30
+  distance: 40
 
 messages:
+  # Prefix added to all plugin chat messages (supports & color codes).
+  # Set empty to disable.
+  prefix: '&8[&dKaraoke&8]&r'
+
   onlyPlayers: '&cTa komenda jest tylko dla graczy.'
   noPermission: '&cBrak uprawnień.'
   hologramsNotReady: '&cKaraoke jeszcze się ładuje (FancyHolograms nie jest gotowy).
