@@ -147,8 +147,15 @@ svc:
   
   # For status/diagnostics only (SVC itself is configured separately).
   # If host is blank and address is provided, the plugin will display svc.address.
-  host: 0.0.0.0
-  port: 35133
+
+  # For streamcraft
+  # host: 0.0.0.0
+  # port: 35133
+  
+  # For localhost 
+  host: 172.19.32.1
+  port: 24454
+
   address: ''
   
   # How far (in blocks) players can hear the karaoke audio.
