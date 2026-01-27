@@ -12,6 +12,7 @@ import me.Luki.karaoke.cache.MediaCache;
 import me.Luki.karaoke.lyrics.LrcParser;
 import me.Luki.karaoke.lyrics.LrcTimedLyrics;
 import me.Luki.karaoke.util.ActionBarProgress;
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.entity.Player;
 
@@ -267,6 +268,33 @@ public class KaraokeService {
         plugin.messages().send(player, "paused", "&ePauza.");
     }
 
+    /**
+     * Pause either your own session, or (if you don't have one) the nearest active session in your area.
+     * This is meant for public karaoke control when players gather near one hologram.
+     */
+    public void pauseNearbyOrOwned(Player actor) {
+        if (actor == null) {
+            return;
+        }
+
+        ResolvedSession resolved = resolveSessionForControl(actor);
+        if (resolved == null) {
+            plugin.messages().send(actor, "noActiveOrNearbySession", "&7Nie masz aktywnego karaoke ani żadnego w pobliżu.");
+            return;
+        }
+
+        resolved.session.pause();
+        plugin.messages().send(actor, "paused", "&ePauza.");
+
+        if (!resolved.ownerId.equals(actor.getUniqueId())) {
+            Player owner = Bukkit.getPlayer(resolved.ownerId);
+            if (owner != null && owner.isOnline()) {
+                plugin.messages().send(owner, "pausedByOther", "&eTwoje karaoke zostało zapauzowane przez {player}.",
+                        "player", actor.getName());
+            }
+        }
+    }
+
     public void resume(Player player) {
         if (player == null) {
             return;
@@ -278,6 +306,108 @@ public class KaraokeService {
         }
         session.resume();
         plugin.messages().send(player, "resumed", "&aWznowiono.");
+    }
+
+    /**
+     * Resume either your own session, or (if you don't have one) the nearest active session in your area.
+     */
+    public void resumeNearbyOrOwned(Player actor) {
+        if (actor == null) {
+            return;
+        }
+
+        ResolvedSession resolved = resolveSessionForControl(actor);
+        if (resolved == null) {
+            plugin.messages().send(actor, "noActiveOrNearbySession", "&7Nie masz aktywnego karaoke ani żadnego w pobliżu.");
+            return;
+        }
+
+        resolved.session.resume();
+        plugin.messages().send(actor, "resumed", "&aWznowiono.");
+
+        if (!resolved.ownerId.equals(actor.getUniqueId())) {
+            Player owner = Bukkit.getPlayer(resolved.ownerId);
+            if (owner != null && owner.isOnline()) {
+                plugin.messages().send(owner, "resumedByOther", "&aTwoje karaoke zostało wznowione przez {player}.",
+                        "player", actor.getName());
+            }
+        }
+    }
+
+    /**
+     * Stop either your own session, or (if you don't have one) the nearest active session in your area.
+     * NOTE: This is intentionally separate from stop(Player) so lifecycle hooks (quit/kick) keep stopping only owned sessions.
+     */
+    public void stopNearbyOrOwned(Player actor) {
+        if (actor == null) {
+            return;
+        }
+
+        ResolvedSession resolved = resolveSessionForControl(actor);
+        if (resolved == null) {
+            plugin.messages().send(actor, "noActiveOrNearbySession", "&7Nie masz aktywnego karaoke ani żadnego w pobliżu.");
+            return;
+        }
+
+        // Clear queue for the owner, since /karaoke stop is a hard stop.
+        stopByOwnerId(resolved.ownerId, true);
+        plugin.messages().send(actor, "stopped", "&aKaraoke zatrzymane.");
+
+        if (!resolved.ownerId.equals(actor.getUniqueId())) {
+            Player owner = Bukkit.getPlayer(resolved.ownerId);
+            if (owner != null && owner.isOnline()) {
+                plugin.messages().send(owner, "stoppedByOther", "&cTwoje karaoke zostało zatrzymane przez {player}.",
+                        "player", actor.getName());
+            }
+        }
+    }
+
+    /**
+     * Skip either your own playlist session, or (if you don't have one) the nearest active session in your area.
+     */
+    public void skipNearbyOrOwned(Player actor) {
+        if (actor == null) {
+            return;
+        }
+
+        ResolvedSession resolved = resolveSessionForControl(actor);
+        if (resolved == null) {
+            plugin.messages().send(actor, "noActiveOrNearbySession", "&7Nie masz aktywnego karaoke ani żadnego w pobliżu.");
+            return;
+        }
+
+        UUID ownerId = resolved.ownerId;
+        Player owner = Bukkit.getPlayer(ownerId);
+        if (owner == null || !owner.isOnline()) {
+            stopByOwnerId(ownerId, true);
+            plugin.messages().send(actor, "stopped", "&aKaraoke zatrzymane.");
+            return;
+        }
+
+        PlayerQueue q = queues.get(ownerId);
+        if (q == null) {
+            // Not a playlist session -> treat skip as stop.
+            stopByOwnerId(ownerId, true);
+            plugin.messages().send(actor, "stopped", "&aKaraoke zatrzymane.");
+            return;
+        }
+
+        // Stop current track but keep the queue.
+        stopByOwnerId(ownerId, false);
+        PlaylistEntry next = q.next();
+        if (next == null) {
+            queues.remove(ownerId);
+            plugin.messages().send(actor, "playlistEnded", "&7Koniec playlisty.");
+            return;
+        }
+
+        startFromCacheOrPrefetch(owner, q.origin(), next, q.color());
+        plugin.messages().send(actor, "skipped", "&aPominięto utwór.");
+
+        if (!ownerId.equals(actor.getUniqueId())) {
+            plugin.messages().send(owner, "skippedByOther", "&eTwój utwór został pominięty przez {player}.",
+                    "player", actor.getName());
+        }
     }
 
     private void startInternal(Player player, String link, KaraokeTextColor color, boolean clearQueueBeforeStart) {
@@ -427,6 +557,73 @@ public class KaraokeService {
                 plugin.debug().warn("Failed to stop session for " + player.getName(), e);
             }
         }
+    }
+
+    private void stopByOwnerId(UUID ownerId, boolean clearQueue) {
+        if (ownerId == null) {
+            return;
+        }
+
+        reservations.remove(ownerId);
+        if (clearQueue) {
+            queues.remove(ownerId);
+        }
+
+        KaraokeSession existing = sessions.remove(ownerId);
+        if (existing != null) {
+            try {
+                existing.stop();
+            } catch (Exception e) {
+                plugin.debug().warn("Failed to stop session for ownerId=" + ownerId, e);
+            }
+        }
+    }
+
+    private double controlRadiusBlocks() {
+        // Default to the same radius used to prevent multiple sessions in one area.
+        // This usually ensures there's at most one controllable session nearby.
+        double exclusion = plugin.getConfig().getDouble("karaoke.exclusionRadiusBlocks", 100D);
+        return Math.max(0D, plugin.getConfig().getDouble("karaoke.controlRadiusBlocks", exclusion));
+    }
+
+    private ResolvedSession resolveSessionForControl(Player actor) {
+        UUID actorId = actor.getUniqueId();
+
+        KaraokeSession owned = sessions.get(actorId);
+        if (owned != null) {
+            return new ResolvedSession(actorId, owned);
+        }
+
+        Location loc = actor.getLocation();
+        double radius = controlRadiusBlocks();
+        ResolvedSession best = null;
+        double bestDist2 = Double.MAX_VALUE;
+
+        for (Map.Entry<UUID, KaraokeSession> entry : sessions.entrySet()) {
+            UUID ownerId = entry.getKey();
+            KaraokeSession session = entry.getValue();
+            if (session == null) {
+                continue;
+            }
+
+            if (!session.isWithinRadius(loc, radius)) {
+                continue;
+            }
+
+            Location origin = session.originLocation();
+            if (origin == null || origin.getWorld() == null || loc.getWorld() == null || !origin.getWorld().equals(loc.getWorld())) {
+                continue;
+            }
+            double d2 = origin.distanceSquared(loc);
+            if (d2 < bestDist2) {
+                bestDist2 = d2;
+                best = new ResolvedSession(ownerId, session);
+            }
+        }
+        return best;
+    }
+
+    private record ResolvedSession(UUID ownerId, KaraokeSession session) {
     }
 
     public void stopAll() {

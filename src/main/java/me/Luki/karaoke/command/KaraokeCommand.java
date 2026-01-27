@@ -41,8 +41,7 @@ public class KaraokeCommand implements CommandExecutor {
         if (args.length >= 1 && args[0].equalsIgnoreCase("stop")) {
             // /karaoke stop -> stop your own session
             if (args.length == 1) {
-                karaokeService.stop(player);
-                karaokeService.getPlugin().messages().send(player, "stopped", "&aKaraoke zatrzymane.");
+                karaokeService.stopNearbyOrOwned(player);
                 return true;
             }
 
@@ -73,7 +72,7 @@ public class KaraokeCommand implements CommandExecutor {
 
         if (args.length >= 1 && args[0].equalsIgnoreCase("pause")) {
             if (args.length == 1) {
-                karaokeService.pause(player);
+                karaokeService.pauseNearbyOrOwned(player);
                 return true;
             }
 
@@ -104,7 +103,7 @@ public class KaraokeCommand implements CommandExecutor {
 
         if (args.length >= 1 && args[0].equalsIgnoreCase("resume")) {
             if (args.length == 1) {
-                karaokeService.resume(player);
+                karaokeService.resumeNearbyOrOwned(player);
                 return true;
             }
 
@@ -135,7 +134,7 @@ public class KaraokeCommand implements CommandExecutor {
 
         if (args.length >= 1 && args[0].equalsIgnoreCase("skip")) {
             if (args.length == 1) {
-                karaokeService.skip(player);
+                karaokeService.skipNearbyOrOwned(player);
                 return true;
             }
 

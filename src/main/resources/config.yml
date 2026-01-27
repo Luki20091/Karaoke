@@ -25,6 +25,12 @@ karaoke:
   # Only one karaoke hologram session is allowed within this radius (in blocks)
   # around the position where /karaoke was executed.
   exclusionRadiusBlocks: 100
+
+  # When using /karaoke pause|resume|stop|skip WITHOUT specifying a player,
+  # and you DON'T own a session, the plugin will try to control the nearest
+  # active karaoke session within this radius.
+  # By default it's the same as exclusionRadiusBlocks.
+  controlRadiusBlocks: 100
   # If metadata fetch hangs/crashes, a start reservation could block an area.
   # This timeout (seconds) expires such reservations automatically.
   startReservationTimeoutSeconds: 30
@@ -199,6 +205,8 @@ messages:
   hologramsNotReady: '&cKaraoke jeszcze się ładuje (FancyHolograms nie jest gotowy).
     Spróbuj za chwilę.'
   stopped: '&aKaraoke zatrzymane.'
+  noActiveSession: '&7Nie masz aktywnego karaoke.'
+  noActiveOrNearbySession: '&7Nie masz aktywnego karaoke ani żadnego w pobliżu.'
   stopOthersNoPermission: '&cMożesz zatrzymać tylko swoje karaoke.'
   stopOtherUsage: '&7Użycie: /karaoke stop <nick>'
   stopOtherNotOnline: '&cTen gracz nie jest online.'
@@ -213,6 +221,11 @@ messages:
   pausedOtherTarget: '&eTwoje karaoke zostało zapauzowane przez admina.'
   resumedOtherSender: '&aWznowiono karaoke gracza {player}.'
   resumedOtherTarget: '&aTwoje karaoke zostało wznowione przez admina.'
+  pausedByOther: '&eTwoje karaoke zostało zapauzowane przez {player}.'
+  resumedByOther: '&aTwoje karaoke zostało wznowione przez {player}.'
+  stoppedByOther: '&cTwoje karaoke zostało zatrzymane przez {player}.'
+  skipped: '&aPominięto utwór.'
+  skippedByOther: '&eTwój utwór został pominięty przez {player}.'
   provideLink: '&cPodaj link do utworu.'
   directLinksDisabled: '&eBezpośrednie linki są wyłączone. Najpierw dodaj utwór do
     playlisty i poczekaj aż się zbuforuje.'
