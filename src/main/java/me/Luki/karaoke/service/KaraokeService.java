@@ -47,11 +47,11 @@ public class KaraokeService {
         return playlistStore;
     }
 
-    public void start(Player player, String link, KaraokeTextColor color) {
-        startInternal(player, link, color, true);
+    public void start(Player player, String link, KaraokeTextColor color, Double volume) {
+        startInternal(player, link, color, volume, true);
     }
 
-    public void play(Player player, String target, KaraokeTextColor color) {
+    public void play(Player player, String target, KaraokeTextColor color, Double volume) {
         if (player == null) {
             return;
         }
@@ -69,7 +69,8 @@ public class KaraokeService {
             }
 
             stop(player, true);
-            PlayerQueue q = new PlayerQueue(pl.entries(), color, player.getLocation());
+            double vol = resolveVolume(volume);
+            PlayerQueue q = new PlayerQueue(pl.entries(), color, vol, player.getLocation());
             queues.put(player.getUniqueId(), q);
             PlaylistEntry first = q.current();
             if (first == null) {
@@ -79,12 +80,12 @@ public class KaraokeService {
             }
 
             plugin.messages().send(player, "playlistPlaying", "&aGram playlistę &f{name}&a.", "name", pl.name());
-            startFromCacheOrPrefetch(player, q.origin(), first, color);
+            startFromCacheOrPrefetch(player, q.origin(), first, color, q.volume());
             return;
         }
 
         // Otherwise, treat as a direct link.
-        startInternal(player, target, color, true);
+        startInternal(player, target, color, volume, true);
     }
 
     public void skip(Player player) {
@@ -107,10 +108,10 @@ public class KaraokeService {
             return;
         }
 
-        startFromCacheOrPrefetch(player, q.origin(), next, q.color());
+        startFromCacheOrPrefetch(player, q.origin(), next, q.color(), q.volume());
     }
 
-    private void startFromCacheOrPrefetch(Player player, Location origin, PlaylistEntry entry, KaraokeTextColor color) {
+    private void startFromCacheOrPrefetch(Player player, Location origin, PlaylistEntry entry, KaraokeTextColor color, double volume) {
         if (player == null || entry == null) {
             return;
         }
@@ -179,7 +180,7 @@ public class KaraokeService {
         } catch (Exception ignored) {
         }
         if (lyrics != null) {
-            startCachedSession(player, origin, audioUrl, track, lyrics, color);
+            startCachedSession(player, origin, audioUrl, track, lyrics, color, volume);
             return;
         }
 
@@ -187,7 +188,7 @@ public class KaraokeService {
         plugin.messages().send(player, "lyricsNotCached", "&eBrak tekstu w cache. Użyj /playlist <nazwa> prefetch lub dodaj/importuj utwór ponownie.");
     }
 
-    private KaraokeSession startCachedSession(Player player, Location origin, String audioUrl, TrackInfo track, TimedLyrics lyrics, KaraokeTextColor color) {
+    private KaraokeSession startCachedSession(Player player, Location origin, String audioUrl, TrackInfo track, TimedLyrics lyrics, KaraokeTextColor color, double volume) {
         if (player == null) {
             return null;
         }
@@ -241,6 +242,7 @@ public class KaraokeService {
                 track,
                 lyrics,
                 color,
+                volume,
                 audio,
                 () -> {
                     KaraokeSession current = sessions.get(playerId);
@@ -401,7 +403,7 @@ public class KaraokeService {
             return;
         }
 
-        startFromCacheOrPrefetch(owner, q.origin(), next, q.color());
+        startFromCacheOrPrefetch(owner, q.origin(), next, q.color(), q.volume());
         plugin.messages().send(actor, "skipped", "&aPominięto utwór.");
 
         if (!ownerId.equals(actor.getUniqueId())) {
@@ -410,10 +412,12 @@ public class KaraokeService {
         }
     }
 
-    private void startInternal(Player player, String link, KaraokeTextColor color, boolean clearQueueBeforeStart) {
+    private void startInternal(Player player, String link, KaraokeTextColor color, Double volume, boolean clearQueueBeforeStart) {
         if (player == null) {
             return;
         }
+
+        final double volumeToUse = resolveVolume(volume);
 
         // Never fetch lyrics during /karaoke. Direct links must be pre-cached via /playlist add|import|prefetch.
         MediaCache cache = plugin.mediaCache();
@@ -510,7 +514,7 @@ public class KaraokeService {
                             "author", (resolvedTrack.author() != null ? resolvedTrack.author() : resolvedTrack.source()));
 
                     reservations.remove(playerId);
-                    startCachedSession(player, origin, link, resolvedTrack, parsedLyrics, color);
+                    startCachedSession(player, origin, link, resolvedTrack, parsedLyrics, color, volumeToUse);
                 });
 
             } catch (Exception e) {
@@ -532,6 +536,21 @@ public class KaraokeService {
                 }
             }
         });
+    }
+
+    private double resolveVolume(Double requested) {
+        double base = plugin.getConfig().getDouble("svc.volume", 1.0);
+        double v = requested != null ? requested : base;
+        if (Double.isNaN(v) || Double.isInfinite(v)) {
+            v = base;
+        }
+        if (v < 0.0) {
+            v = 0.0;
+        }
+        if (v > 2.0) {
+            v = 2.0;
+        }
+        return v;
     }
 
     public void stop(Player player) {

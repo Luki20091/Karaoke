@@ -92,11 +92,21 @@ public final class VoicechatBridge implements VoicechatPlugin, VoiceBridge {
 
     @Override
     public void startSessionAudio(UUID sessionId, Player contextPlayer, Location origin, Path audioFile) {
-        startSessionAudio(sessionId, contextPlayer, origin, audioFile, 0L);
+        startSessionAudio(sessionId, contextPlayer, origin, audioFile, 0L, null);
+    }
+
+    @Override
+    public void startSessionAudio(UUID sessionId, Player contextPlayer, Location origin, Path audioFile, Double volumeOverride) {
+        startSessionAudio(sessionId, contextPlayer, origin, audioFile, 0L, volumeOverride);
     }
 
     @Override
     public void startSessionAudio(UUID sessionId, Player contextPlayer, Location origin, Path audioFile, long startAtMillis) {
+        startSessionAudio(sessionId, contextPlayer, origin, audioFile, startAtMillis, null);
+    }
+
+    @Override
+    public void startSessionAudio(UUID sessionId, Player contextPlayer, Location origin, Path audioFile, long startAtMillis, Double volumeOverride) {
         if (sessionId == null || origin == null || origin.getWorld() == null) {
             return;
         }
@@ -163,7 +173,10 @@ public final class VoicechatBridge implements VoicechatPlugin, VoiceBridge {
             supplier = new ToneSupplier(durationMs, frequencyHz, amplitude);
         }
 
-        double volume = clamp(plugin.getConfig().getDouble("svc.volume", 1.0), 0.0, 2.0);
+        double volume = volumeOverride != null
+                ? volumeOverride
+                : plugin.getConfig().getDouble("svc.volume", 1.0);
+        volume = clamp(volume, 0.0, 2.0);
         if (volume != 1.0) {
             supplier = new VolumeSupplier(supplier, volume);
         }

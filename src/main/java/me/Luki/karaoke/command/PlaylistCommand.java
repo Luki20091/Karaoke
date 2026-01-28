@@ -3,6 +3,7 @@ package me.Luki.karaoke.command;
 import me.Luki.karaoke.Karaoke;
 import me.Luki.karaoke.cache.MediaCache;
 import me.Luki.karaoke.lyrics.LrclibClient;
+import me.Luki.karaoke.lyrics.YoutubeCaptionsClient;
 import me.Luki.karaoke.meta.LinkMetadataClient;
 import me.Luki.karaoke.playlist.Playlist;
 import me.Luki.karaoke.playlist.PlaylistEntry;
@@ -33,6 +34,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class PlaylistCommand implements CommandExecutor {
 
@@ -41,6 +43,7 @@ public class PlaylistCommand implements CommandExecutor {
     private final MediaCache cache;
     private final LinkMetadataClient metadata;
     private final LrclibClient lrclib;
+    private final YoutubeCaptionsClient ytCaptions;
     private final HttpClient http;
 
     public PlaylistCommand(Karaoke plugin, PlaylistStore store) {
@@ -49,6 +52,7 @@ public class PlaylistCommand implements CommandExecutor {
         this.cache = plugin.mediaCache();
         this.metadata = new LinkMetadataClient(plugin);
         this.lrclib = new LrclibClient(plugin);
+        this.ytCaptions = new YoutubeCaptionsClient(plugin);
         int timeoutSeconds = Math.max(5, plugin.getConfig().getInt("metadata.timeoutSeconds", 10));
         this.http = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(timeoutSeconds))
@@ -189,9 +193,21 @@ public class PlaylistCommand implements CommandExecutor {
 
                         String lrc = null;
                         try {
-                            String query = (cachedAuthor != null && !cachedAuthor.isBlank()) ? (cachedTitle + " " + cachedAuthor) : cachedTitle;
+                            String query = me.Luki.karaoke.lyrics.LrclibClient.buildSearchQuery(cachedTitle, cachedAuthor);
                             lrc = lrclib.searchLrc(query, null);
                         } catch (Exception ignored) {
+                        }
+                        if ((lrc == null || lrc.isBlank()) && isYouTubeLink(url) && isYoutubeCaptionsEnabled()) {
+                            try {
+                                plugin.getServer().getScheduler().runTask(plugin, () ->
+                                        plugin.messages().send(sender, "playlistPrefetchCaptionsStart", "&eLRCLIB nie znalazł tekstu — próbuję napisy z YouTube…"));
+                                lrc = ytCaptions.fetchLrc(url, getPreferredLanguages(), allowFallbackLanguage(), null);
+                                if (lrc != null && !lrc.isBlank()) {
+                                    plugin.getServer().getScheduler().runTask(plugin, () ->
+                                            plugin.messages().send(sender, "playlistPrefetchCaptionsFound", "&aZnaleziono tekst z YouTube captions."));
+                                }
+                            } catch (Exception ignored) {
+                            }
                         }
                         if (lrc == null || lrc.isBlank()) {
                             plugin.getServer().getScheduler().runTask(plugin, () ->
@@ -471,6 +487,8 @@ public class PlaylistCommand implements CommandExecutor {
             int fail = 0;
             int processed = 0;
             int total = 0;
+            AtomicBoolean notifiedCaptions = new AtomicBoolean(false);
+            AtomicBoolean notifiedCaptionsFound = new AtomicBoolean(false);
 
             try {
                 CsvDownload dl = downloadCsv(finalCsvUrl, playlistName);
@@ -583,11 +601,36 @@ public class PlaylistCommand implements CommandExecutor {
                                 if (bar != null) {
                                     bar.setStage("Tekst " + processed + "/" + total);
                                 }
-                                String query = (cachedAuthor != null && !cachedAuthor.isBlank()) ? (cachedTitle + " " + cachedAuthor) : cachedTitle;
-                                String lrc = lrclib.searchLrc(query, null);
-                                if (lrc != null && !lrc.isBlank()) {
+                                String query = me.Luki.karaoke.lyrics.LrclibClient.buildSearchQuery(cachedTitle, cachedAuthor);
+                                String lrc = null;
+                                try {
+                                    lrc = lrclib.searchLrc(query, null);
+                                } catch (Exception ignored) {
+                                }
+
+                                boolean gotLyrics = lrc != null && !lrc.isBlank();
+                                if (gotLyrics) {
                                     cache.storeSyncedLyrics(ytToUse, lrc);
-                                } else {
+                                } else if (isYouTubeLink(ytToUse) && isYoutubeCaptionsEnabled()) {
+                                    try {
+                                        if (notifiedCaptions.compareAndSet(false, true)) {
+                                            plugin.getServer().getScheduler().runTask(plugin, () ->
+                                                    plugin.messages().send(sender, "playlistPrefetchCaptionsStart", "&eLRCLIB nie znalazł tekstu — próbuję napisy z YouTube…"));
+                                        }
+                                        String lrcCap = ytCaptions.fetchLrc(ytToUse, getPreferredLanguages(), allowFallbackLanguage(), null);
+                                        if (lrcCap != null && !lrcCap.isBlank()) {
+                                            cache.storeSyncedLyrics(ytToUse, lrcCap);
+                                            gotLyrics = true;
+                                            if (notifiedCaptionsFound.compareAndSet(false, true)) {
+                                                plugin.getServer().getScheduler().runTask(plugin, () ->
+                                                        plugin.messages().send(sender, "playlistPrefetchCaptionsFound", "&aZnaleziono tekst z YouTube captions."));
+                                            }
+                                        }
+                                    } catch (Exception ignored) {
+                                    }
+                                }
+
+                                if (!gotLyrics) {
                                     missingLyrics = true;
                                     int id = r.id;
                                     String titleToSend = cachedTitle != null && !cachedTitle.isBlank() ? cachedTitle : entryName;
@@ -900,6 +943,40 @@ public class PlaylistCommand implements CommandExecutor {
         return legacy.isBlank() ? "KaraokePlugin/1.0" : legacy;
     }
 
+    private boolean isYoutubeCaptionsEnabled() {
+        return plugin.getConfig().getBoolean("lyrics.youtubeCaptions.enabled", true);
+    }
+
+    private boolean allowFallbackLanguage() {
+        return plugin.getConfig().getBoolean("lyrics.allowFallbackLanguage", true);
+    }
+
+    private List<String> getPreferredLanguages() {
+        List<String> langs = plugin.getConfig().getStringList("lyrics.preferredLanguages");
+        if (langs == null || langs.isEmpty()) {
+            return List.of("pl", "en");
+        }
+        List<String> out = new ArrayList<>();
+        for (String l : langs) {
+            if (l == null) {
+                continue;
+            }
+            String t = l.trim();
+            if (!t.isBlank()) {
+                out.add(t);
+            }
+        }
+        return out.isEmpty() ? List.of("pl", "en") : out;
+    }
+
+    private static boolean isYouTubeLink(String url) {
+        if (url == null) {
+            return false;
+        }
+        String u = url.toLowerCase(Locale.ROOT);
+        return u.contains("youtube.com") || u.contains("youtu.be") || u.contains("music.youtube.com");
+    }
+
     private boolean prefetchPlaylist(CommandSender sender, String playlistName) {
         Playlist pl = store.get(playlistName);
         if (pl == null) {
@@ -923,6 +1000,8 @@ public class PlaylistCommand implements CommandExecutor {
             int totalEntries = pl.entries().size();
             int ok = 0;
             int fail = 0;
+            AtomicBoolean notifiedCaptions = new AtomicBoolean(false);
+            AtomicBoolean notifiedCaptionsFound = new AtomicBoolean(false);
 
             try {
                 for (int i = 0; i < pl.entries().size(); i++) {
@@ -952,10 +1031,30 @@ public class PlaylistCommand implements CommandExecutor {
                             if (bar != null) {
                                 bar.setStage("Tekst " + idx1 + "/" + totalEntries);
                             }
-                            String query = (track.author() != null && !track.author().isBlank()) ? (track.title() + " " + track.author()) : track.title();
-                            String lrc = lrclib.searchSyncedLrc(query, bar != null ? bar.asListener() : null);
+                            String query = me.Luki.karaoke.lyrics.LrclibClient.buildSearchQuery(track.title(), track.author());
+                            String lrc = null;
+                            try {
+                                lrc = lrclib.searchLrc(query, bar != null ? bar.asListener() : null);
+                            } catch (Exception ignored) {
+                            }
                             if (lrc != null && !lrc.isBlank()) {
                                 cache.storeSyncedLyrics(sourceUrl, lrc);
+                            } else if (isYouTubeLink(sourceUrl) && isYoutubeCaptionsEnabled()) {
+                                if (bar != null) {
+                                    bar.setStage("Napisy " + idx1 + "/" + totalEntries);
+                                }
+                                if (notifiedCaptions.compareAndSet(false, true)) {
+                                    plugin.getServer().getScheduler().runTask(plugin, () ->
+                                            plugin.messages().send(sender, "playlistPrefetchCaptionsStart", "&eLRCLIB nie znalazł tekstu — próbuję napisy z YouTube…"));
+                                }
+                                String lrcCap = ytCaptions.fetchLrc(sourceUrl, getPreferredLanguages(), allowFallbackLanguage(), bar != null ? bar.asListener() : null);
+                                if (lrcCap != null && !lrcCap.isBlank()) {
+                                    cache.storeSyncedLyrics(sourceUrl, lrcCap);
+                                    if (notifiedCaptionsFound.compareAndSet(false, true)) {
+                                        plugin.getServer().getScheduler().runTask(plugin, () ->
+                                                plugin.messages().send(sender, "playlistPrefetchCaptionsFound", "&aZnaleziono tekst z YouTube captions."));
+                                    }
+                                }
                             }
                         }
 

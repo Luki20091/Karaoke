@@ -51,9 +51,9 @@ ui:
 
 debug:
   # Enables extra logging in console
-  enabled: false
+  enabled: true
   # Log outgoing HTTP calls/statuses (only if debug.enabled=true)
-  http: false
+  http: true
 
 http:
   # Default User-Agent used for all outgoing HTTP requests (ffmpeg/metadata/lyrics/cache)
@@ -61,15 +61,30 @@ http:
 
 lyrics:
   enabled: true
+  # Preferred caption/lyrics languages (first match wins)
+  preferredLanguages:
+    - pl
+    - en
+  # If true and preferredLanguages aren't available, use any available language as a fallback.
+  allowFallbackLanguage: true
   timeoutSeconds: 15
   # How many times to retry transient HTTP errors (IO/timeout/429/5xx)
   retries: 2
   # Base backoff between retries (ms)
   retryBackoffMs: 250
+  # When only plain (unsynced) lyrics are found, this is the synthetic per-line duration.
+  unsyncedLineMs: 3500
   # Uses https://lrclib.net as a synced-lyrics provider when possible
   # If synced lyrics are not available, the plugin will fall back to plain lyrics
   # and approximate word timings.
   provider: lrclib
+
+  # Fallback provider used when LRCLIB has no lyrics.
+  youtubeCaptions:
+    enabled: true
+    timeoutSeconds: 15
+    retries: 1
+    retryBackoffMs: 250
 
 cache:
   enabled: true
@@ -161,18 +176,18 @@ svc:
   
   # Output volume multiplier for SVC audio.
   # 1.0 = default, 0.5 = half volume, 0.0 = mute.
-  volume: 0.7
+  volume: 0.6
   
   # For status/diagnostics only (SVC itself is configured separately).
   # If host is blank and address is provided, the plugin will display svc.address.
 
   # For streamcraft
-  # host: 0.0.0.0
-  # port: 35133
+  host: 0.0.0.0
+  port: 35133
   
   # For localhost 
-  host: 172.19.32.1
-  port: 24454
+  # host: 192.168.18.16
+  # port: 24454
 
   address: ''
   
@@ -230,6 +245,7 @@ messages:
   directLinksDisabled: '&eBezpośrednie linki są wyłączone. Najpierw dodaj utwór do
     playlisty i poczekaj aż się zbuforuje.'
   invalidColor: '&cNieprawidłowy kolor. Użyj: czerwony/zielony/niebieski'
+  invalidVolume: '&cNieprawidłowa głośność. Podaj liczbę 0.0-2.0 (np. 0.7).'
   loadingMetadata: '&7Ładuję informacje o utworze…'
   loadedMetadata: '&aInformacje gotowe: &f{title}&7 - &f{author}'
   loadingLyrics: '&7Pobieram tekst…'
@@ -255,6 +271,8 @@ messages:
   # Preferred: separated background stages
   playlistPrefetchMetadataStart: '&7Pobieram informacje z YouTube…'
   playlistPrefetchLyricsStart: '&7Pobieram tekst z API…'
+  playlistPrefetchCaptionsStart: '&eLRCLIB nie znalazł tekstu — próbuję napisy z YouTube…'
+  playlistPrefetchCaptionsFound: '&aZnaleziono tekst z YouTube captions.'
   playlistPrefetchAudioStart: '&7Pobieram plik audio…'
   playlistPrefetchDone: '&aZbuforowano: &f{title}&7 - &f{author}'
   playlistPrefetchFail: '&cBuforowanie nieudane: {error}'
@@ -311,4 +329,10 @@ messages:
 #
 # Import:
 # /playlist import test2 https://www.dropbox.com/scl/fi/5l65czpz6yz6wthpay6st/playlista_streamcraft.csv?rlkey=wah72rsolfjp72moz8omce5qj&st=sr3cqq5z&dl=1
-# /karaoke play test2 czerwony
+# /karaoke play test2 czerwony 0.4
+
+
+
+
+# /playlist add Mixsalat_ https://www.youtube.com/watch?v=s3UQBZLeqbk
+# /playlist addfile Mixsalat_ 1 https://www.dropbox.com/scl/fi/3wg5kcpqlozs9x6xg1qmj/Taco-Hemingway-Mix-Sa-at-feat.-Daria-Zawia-ow-prod.-Zeppy-Zep.mp3?rlkey=okxk7m0vsncu8lh2dtcfkh7dt&st=x43xb241&dl=1

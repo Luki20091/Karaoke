@@ -165,7 +165,8 @@ public class KaraokeCommand implements CommandExecutor {
 
         if (args.length >= 1 && args[0].equalsIgnoreCase("play")) {
             if (args.length < 3) {
-                karaokeService.getPlugin().messages().send(player, "playUsage", "&7Użycie: /karaoke play <link|playlist> <kolor>");
+                karaokeService.getPlugin().messages().send(player, "playUsage", "&7Użycie: /karaoke play <link|playlist> <kolor> [głośność]",
+                        "label", label);
                 return true;
             }
 
@@ -179,7 +180,18 @@ public class KaraokeCommand implements CommandExecutor {
                 return true;
             }
 
-            karaokeService.play(player, target, color);
+            Double volume = null;
+            if (args.length >= 4) {
+                volume = parseVolume(args[3]);
+                if (volume == null) {
+                    karaokeService.getPlugin().messages().send(player, "invalidVolume",
+                            "&cNieprawidłowa głośność. Podaj liczbę 0.0-2.0 (np. 0.7)."
+                    );
+                    return true;
+                }
+            }
+
+            karaokeService.play(player, target, color, volume);
             return true;
         }
 
@@ -216,8 +228,47 @@ public class KaraokeCommand implements CommandExecutor {
             return true;
         }
 
-        karaokeService.start(player, link, color);
+        Double volume = null;
+        if (args.length >= 3) {
+            volume = parseVolume(args[2]);
+            if (volume == null) {
+                karaokeService.getPlugin().messages().send(player, "invalidVolume",
+                        "&cNieprawidłowa głośność. Podaj liczbę 0.0-2.0 (np. 0.7)."
+                );
+                return true;
+            }
+        }
+
+        karaokeService.start(player, link, color, volume);
         return true;
+    }
+
+    private static Double parseVolume(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String t = raw.trim();
+        if (t.isBlank()) {
+            return null;
+        }
+        // Allow Polish decimal comma.
+        t = t.replace(',', '.');
+        try {
+            double v = Double.parseDouble(t);
+            if (Double.isNaN(v) || Double.isInfinite(v)) {
+                return null;
+            }
+            // Accept 0..2 like svc.volume.
+            if (v < 0.0) {
+                v = 0.0;
+            }
+            if (v > 2.0) {
+                v = 2.0;
+            }
+            return v;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public Collection<String> suggest(@NotNull CommandSender sender, @NotNull String[] args) {

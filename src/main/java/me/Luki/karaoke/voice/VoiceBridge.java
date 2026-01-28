@@ -39,6 +39,22 @@ public interface VoiceBridge {
         startSessionAudio(sessionId, player, origin, audioFile);
     }
 
+    /**
+     * Starts locational audio near origin with an optional volume override.
+     * If volumeOverride is null, implementations should use their configured default.
+     */
+    default void startSessionAudio(UUID sessionId, Player player, Location origin, Path audioFile, Double volumeOverride) {
+        startSessionAudio(sessionId, player, origin, audioFile, 0L, volumeOverride);
+    }
+
+    /**
+     * Starts locational audio near origin at a given offset (milliseconds) into the track,
+     * with an optional volume override.
+     */
+    default void startSessionAudio(UUID sessionId, Player player, Location origin, Path audioFile, long startAtMillis, Double volumeOverride) {
+        startSessionAudio(sessionId, player, origin, audioFile, startAtMillis);
+    }
+
     void startSessionAudio(UUID sessionId, Location origin, Path audioFile);
 
     void stopSessionAudio(UUID sessionId);

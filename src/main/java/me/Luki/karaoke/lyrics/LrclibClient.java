@@ -15,8 +15,15 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Locale;
+import java.util.regex.Pattern;
 
 public final class LrclibClient {
+
+    private static final Pattern BRACKETS = Pattern.compile("\\[[^\\]]*\\]");
+    private static final Pattern PARENS = Pattern.compile("\\([^\\)]*\\)");
+    private static final Pattern FEAT_SUFFIX = Pattern.compile("(?i)\\b(feat\\.?|ft\\.?|featuring)\\b.*$");
+    private static final Pattern PROD_SUFFIX = Pattern.compile("(?i)\\b(prod\\.?|produced\\s+by)\\b.*$");
 
     private final Karaoke plugin;
     private final HttpClient http;
@@ -28,6 +35,95 @@ public final class LrclibClient {
                 .connectTimeout(Duration.ofSeconds(timeoutSeconds))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
+    }
+
+    /**
+     * Builds a compact LRCLIB search query.
+     * Example: title="Taco Hemingway - Mix Sałat feat. ...", artist="Taco Hemingway" -> "Taco Hemingway - Mix Sałat".
+     */
+    public static String buildSearchQuery(String title, String artist) {
+        String a = normalizeArtistForSearch(artist);
+        String t = normalizeTitleForSearch(title, a);
+        if (t == null || t.isBlank()) {
+            return null;
+        }
+        if (a != null && !a.isBlank()) {
+            return (a + " - " + t).trim();
+        }
+        return t.trim();
+    }
+
+    private static String normalizeArtistForSearch(String artist) {
+        if (artist == null) {
+            return null;
+        }
+        String a = artist.trim();
+        if (a.isBlank()) {
+            return a;
+        }
+        String lower = a.toLowerCase(Locale.ROOT);
+        if (lower.endsWith("- topic")) {
+            a = a.substring(0, a.length() - "- topic".length()).trim();
+        }
+        return a;
+    }
+
+    private static String normalizeTitleForSearch(String title, String artist) {
+        if (title == null) {
+            return null;
+        }
+        String t = title.trim();
+        if (t.isBlank()) {
+            return t;
+        }
+
+        // Remove common decorations: [Official Video], (prod. ...), etc.
+        t = BRACKETS.matcher(t).replaceAll(" ");
+        t = PARENS.matcher(t).replaceAll(" ");
+
+        // Strip anything after separators like '|'
+        int pipe = t.indexOf('|');
+        if (pipe > 0) {
+            t = t.substring(0, pipe).trim();
+        }
+
+        // If title is in "Artist - Title" form, remove artist part.
+        if (artist != null && !artist.isBlank()) {
+            String tl = t.toLowerCase(Locale.ROOT);
+            String al = artist.trim().toLowerCase(Locale.ROOT);
+
+            String prefix = al + " - ";
+            if (tl.startsWith(prefix)) {
+                t = t.substring(prefix.length()).trim();
+            } else {
+                int dash = t.indexOf(" - ");
+                if (dash > 0) {
+                    String left = t.substring(0, dash).trim().toLowerCase(Locale.ROOT);
+                    if (left.equals(al) || left.contains(al)) {
+                        t = t.substring(dash + 3).trim();
+                    }
+                }
+            }
+        }
+
+        // Remove trailing feat./prod. segments.
+        t = FEAT_SUFFIX.matcher(t).replaceAll("").trim();
+        t = PROD_SUFFIX.matcher(t).replaceAll("").trim();
+
+        // Collapse whitespace.
+        t = t.replaceAll("\\s{2,}", " ").trim();
+
+        // Keep query reasonably short.
+        if (t.length() > 120) {
+            t = t.substring(0, 120).trim();
+        }
+
+        // Avoid trailing '-' artifacts
+        while (t.endsWith("-") || t.endsWith("–") || t.endsWith(":") || t.endsWith("|")) {
+            t = t.substring(0, t.length() - 1).trim();
+        }
+
+        return t;
     }
 
     public String searchSyncedLrc(String query) throws Exception {

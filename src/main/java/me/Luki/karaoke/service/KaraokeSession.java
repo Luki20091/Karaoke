@@ -24,6 +24,8 @@ public class KaraokeSession {
     private volatile TimedLyrics lyrics;
     private final KaraokeTextColor highlightColor;
 
+    private final double volume;
+
     private final UUID sessionId;
     private final Path audioFile;
 
@@ -48,7 +50,7 @@ public class KaraokeSession {
     private long pausedAtMillis;
     private long pausedTotalMillis;
 
-    public KaraokeSession(Karaoke plugin, Player player, Location origin, TrackInfo track, TimedLyrics lyrics, KaraokeTextColor highlightColor, Path audioFile, Runnable onStop) {
+    public KaraokeSession(Karaoke plugin, Player player, Location origin, TrackInfo track, TimedLyrics lyrics, KaraokeTextColor highlightColor, double volume, Path audioFile, Runnable onStop) {
         this.plugin = plugin;
         this.player = player;
         this.origin = origin == null ? null : origin.clone();
@@ -56,6 +58,7 @@ public class KaraokeSession {
         this.track = track;
         this.lyrics = lyrics;
         this.highlightColor = highlightColor;
+        this.volume = volume;
         this.sessionId = UUID.randomUUID();
         this.audioFile = audioFile;
         this.announced = false;
@@ -87,7 +90,7 @@ public class KaraokeSession {
         // Optional voice playback (SVC)
         try {
             if (plugin.voiceBridge() != null) {
-                plugin.voiceBridge().startSessionAudio(sessionId, player, audioOrigin, audioFile);
+                plugin.voiceBridge().startSessionAudio(sessionId, player, audioOrigin, audioFile, volume);
             }
         } catch (Throwable t) {
             plugin.debug().warn("Failed to start SVC audio; continuing without audio", t);
@@ -264,7 +267,7 @@ public class KaraokeSession {
         // Resume audio from the paused offset.
         try {
             if (audioFile != null && plugin.voiceBridge() != null && audioOrigin != null && audioOrigin.getWorld() != null) {
-                plugin.voiceBridge().startSessionAudio(sessionId, player, audioOrigin, audioFile, pausedAudioElapsedMs);
+                plugin.voiceBridge().startSessionAudio(sessionId, player, audioOrigin, audioFile, pausedAudioElapsedMs, volume);
             }
         } catch (Throwable t) {
             plugin.debug().debug(() -> "Failed to resume SVC audio: " + t.getClass().getSimpleName());

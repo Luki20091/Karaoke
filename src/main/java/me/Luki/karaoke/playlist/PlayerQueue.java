@@ -11,12 +11,14 @@ public final class PlayerQueue {
     private final List<PlaylistEntry> entries;
     private int index;
     private KaraokeTextColor color;
+    private double volume;
     private final Location origin;
 
-    public PlayerQueue(List<PlaylistEntry> entries, KaraokeTextColor color, Location origin) {
+    public PlayerQueue(List<PlaylistEntry> entries, KaraokeTextColor color, double volume, Location origin) {
         this.entries = new ArrayList<>(entries);
         this.index = 0;
         this.color = color;
+        this.volume = volume;
         this.origin = origin == null ? null : origin.clone();
     }
 
@@ -43,11 +45,19 @@ public final class PlayerQueue {
         return color;
     }
 
+    public double volume() {
+        return volume;
+    }
+
     public Location origin() {
         return origin == null ? null : origin.clone();
     }
 
     public void setColor(KaraokeTextColor color) {
         this.color = color;
+    }
+
+    public void setVolume(double volume) {
+        this.volume = volume;
     }
 }
